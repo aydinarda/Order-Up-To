@@ -1,0 +1,180 @@
+name: E2E – Live Game Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Server URL (e.g. https://your-app.onrender.com)"
+        required: false
+
+env:
+  BASE_URL:  ${{ inputs.server_url || secrets.RENDER_URL || 'https://simplenewsvendorgame.onrender.com' }}
+  ADMIN_KEY: ${{ secrets.ADMIN_KEY  || 'admin123' }}
+
+jobs:
+  e2e:
+    name: "Full game – create → join → play → finish"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      # Render free tier sleeps – wake the backend API
+      - name: "Wake up backend (cold-start)"
+        run: |
+          echo "Pinging /health until it responds..."
+          for i in 1 2 3 4 5 6; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 40 "$BASE_URL/health")
+            echo "  Attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && { echo "  Backend is up."; break; }
+            [ "$i" = "6" ] && { echo "FAIL: backend did not wake up"; exit 1; }
+            sleep 10
+          done
+
+      # ── 1. Health check ────────────────────────────────────────────────────
+      - name: "Check: /health returns 200"
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
+          echo "HTTP status: $STATUS"
+          [ "$STATUS" = "200" ] || { echo "FAIL: expected 200, got $STATUS"; exit 1; }
+
+      # ── 2. Full game via API ───────────────────────────────────────────────
+      - name: "Play a full 3-hand game via API"
+        env:
+          BASE_URL:  ${{ env.BASE_URL }}
+          ADMIN_KEY: ${{ env.ADMIN_KEY }}
+        run: |
+          python - <<'PYEOF'
+          import os, sys, json, random, requests, time
+
+          BASE      = os.environ["BASE_URL"].rstrip("/")
+          ADMIN_KEY = os.environ["ADMIN_KEY"]
+          HANDS     = 3
+          s = requests.Session()
+          s.headers["Content-Type"] = "application/json"
+
+          # ─── helpers ───────────────────────────────────────────────────────
+          def safe_json(r, label=""):
+              text = r.text.strip() if r.text else ""
+              if not r.ok:
+                  print(f"FAIL [{label}] HTTP {r.status_code}", file=sys.stderr)
+                  print(f"  Body: {text[:400]}", file=sys.stderr)
+                  sys.exit(1)
+              if not text:
+                  print(f"FAIL [{label}] empty response body", file=sys.stderr)
+                  sys.exit(1)
+              try:
+                  return r.json()
+              except Exception as e:
+                  print(f"FAIL [{label}] JSON parse: {e} | body: {text[:400]}", file=sys.stderr)
+                  sys.exit(1)
+
+          def ok(r, label=""):
+              d = safe_json(r, label)
+              print(f"  OK  [{label}] {json.dumps(d)[:200]}")
+              return d
+
+          def get_json(url, label="", **kwargs):
+              r = s.get(url, **kwargs)
+              return safe_json(r, label)
+
+          # ─── 1. Create game (admin) ────────────────────────────────────────
+          print("\n=== 1. Create game as admin ===")
+          d = ok(s.post(f"{BASE}/start-game", json={
+              "nickname":    "admin",
+              "adminKey":    ADMIN_KEY,
+              "handsPerTur": HANDS,
+              "totalTurs":   1,
+          }), "start-game/admin")
+          game_id     = d["gameId"]
+          admin_token = d["adminToken"]
+          admin_pid   = d["playerId"]
+          print(f"  gameId={game_id}  adminToken={admin_token[:8]}...")
+
+          # ─── 2. Join 4 players ─────────────────────────────────────────────
+          print("\n=== 2. Join 4 players ===")
+          players = []
+          for name in ["Alice", "Bob", "Carol", "Dave"]:
+              d = ok(s.post(f"{BASE}/start-game", json={"nickname": name, "gameId": game_id}),
+                     f"join/{name}")
+              players.append({"id": d["playerId"], "name": name})
+
+          # ─── 3. Play all hands ─────────────────────────────────────────────
+          for hand in range(1, HANDS + 1):
+              print(f"\n=== Hand {hand}/{HANDS} ===")
+
+              # Admin starts round
+              d = ok(s.post(f"{BASE}/start-round", json={"gameId": game_id, "adminToken": admin_token}),
+                     f"h{hand}/start-round")
+              assert d["roundPhase"] == "active", f"Expected active, got {d['roundPhase']}"
+
+              # All players submit orders
+              for p in players:
+                  qty = random.randint(80, 120)
+                  d = ok(s.post(f"{BASE}/submit-order",
+                                json={"gameId": game_id, "playerId": p["id"], "orderQuantity": qty}),
+                         f"h{hand}/submit/{p['name']}")
+                  assert d["accepted"], f"{p['name']}: order not accepted"
+                  print(f"    {p['name']} ordered {qty}")
+
+              # Admin ends round
+              d = ok(s.post(f"{BASE}/end-round", json={"gameId": game_id, "adminToken": admin_token}),
+                     f"h{hand}/end-round")
+              assert "realizedDemand" in d, "end-round response missing realizedDemand"
+              assert isinstance(d["realizedDemand"], (int, float)), "realizedDemand not a number"
+              print(f"  Realized demand: {d['realizedDemand']}")
+              print(f"  Leaderboard entries: {len(d.get('leaderboard', []))}")
+
+          # ─── 4. Final leaderboard ──────────────────────────────────────────
+          print("\n=== 4. Final leaderboard ===")
+          lb = get_json(f"{BASE}/leaderboard", label="leaderboard", params={"gameId": game_id})
+          rows = lb.get("leaderboard", [])
+          assert len(rows) > 0, "Empty leaderboard"
+          for row in rows:
+              print(f"  #{row['rank']}  {row['nickname']}  ${row['cumulativeProfit']}")
+
+          # ─── 5. Admin sees realized demand history (new feature) ───────────
+          print("\n=== 5. Verify admin round history ===")
+          gs = get_json(f"{BASE}/game-state", label="game-state/admin",
+                        params={"gameId": game_id, "adminToken": admin_token, "playerId": admin_pid})
+          rh = gs.get("roundHistory", [])
+          assert len(rh) == HANDS, f"Expected {HANDS} round history entries, got {len(rh)}"
+          for entry in rh:
+              assert isinstance(entry["realizedDemand"], (int, float)), \
+                  f"realizedDemand missing/invalid in entry {entry}"
+              print(f"  Hand {entry['roundNo']}: demand={entry['realizedDemand']}")
+          print(f"  PASS – admin can see all {HANDS} realized demands")
+
+          # ─── 6. Error cases ────────────────────────────────────────────────
+          print("\n=== 6. Error cases ===")
+          r = s.post(f"{BASE}/start-round", json={"gameId": game_id, "adminToken": admin_token})
+          assert r.status_code == 400, f"Expected 400 for completed game, got {r.status_code}"
+          print("  OK  [start-round on finished game → 400]")
+
+          r = s.post(f"{BASE}/start-game", json={"nickname": "Alice", "gameId": game_id})
+          assert r.status_code == 409, f"Expected 409 for duplicate nickname, got {r.status_code}"
+          print("  OK  [duplicate nickname → 409]")
+
+          r = s.get(f"{BASE}/game-state", params={"gameId": "not-a-real-id"})
+          assert r.status_code == 400, f"Expected 400 for invalid gameId, got {r.status_code}"
+          print("  OK  [invalid gameId → 400]")
+
+          print("\n  PASS – full game ran successfully!")
+          PYEOF
+
+      # ── 3. Check invalid game id ───────────────────────────────────────────
+      - name: "Check: invalid gameId returns 400"
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$BASE_URL/game-state?gameId=ZZZZZZ")
+          echo "HTTP status for invalid gameId: $STATUS"
+          [ "$STATUS" = "400" ] || { echo "FAIL: expected 400, got $STATUS"; exit 1; }

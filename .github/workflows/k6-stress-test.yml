@@ -1,0 +1,154 @@
+name: k6 Stress Test (limit finder — 300 players + churn + abusers)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Backend URL (empty -> RENDER_URL secret)"
+        required: false
+        default: ""
+      admin_key:
+        description: "Admin key"
+        required: false
+        default: "admin123"
+      players:
+        description: "Number of base players"
+        required: false
+        default: "300"
+      rounds:
+        description: "Number of rounds"
+        required: false
+        default: "20"
+      play_window:
+        description: "Seconds players get to submit per round"
+        required: false
+        default: "8"
+      seg:
+        description: "Duration of one ramp segment (e.g. 60s)"
+        required: false
+        default: "60s"
+
+env:
+  BASE_URL:    ${{ inputs.server_url || secrets.RENDER_URL || 'https://simplenewsvendorgame.onrender.com' }}
+  ADMIN_KEY:   ${{ inputs.admin_key  || secrets.ADMIN_KEY  || 'admin123' }}
+  PLAYERS:     ${{ inputs.players      || '300' }}
+  ROUNDS:      ${{ inputs.rounds       || '20' }}
+  PLAY_WINDOW: ${{ inputs.play_window  || '8' }}
+  SEG:         ${{ inputs.seg          || '60s' }}
+
+jobs:
+  k6:
+    name: "limit finder — 300 players + churn + abusers"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+          k6 version
+
+      - name: "Wake up backend"
+        run: |
+          echo "Pinging /health until it responds..."
+          for i in 1 2 3 4 5 6; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 40 "$BASE_URL/health")
+            echo "  Attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && { echo "  Backend is up."; break; }
+            [ "$i" = "6" ] && { echo "FAIL: backend did not respond"; exit 1; }
+            sleep 10
+          done
+
+      # Limit finder: thresholds are meant to be crossed. Informational — does not fail CI.
+      - name: Run k6 stress test
+        id: k6
+        run: |
+          k6 run \
+            --env BASE_URL="$BASE_URL" \
+            --env ADMIN_KEY="$ADMIN_KEY" \
+            --env PLAYERS="$PLAYERS" \
+            --env ROUNDS="$ROUNDS" \
+            --env PLAY_WINDOW="$PLAY_WINDOW" \
+            --env SEG="$SEG" \
+            --summary-export=k6-summary.json \
+            --out json=k6-results.ndjson \
+            k6/game_stress_test.js
+        continue-on-error: true
+
+      - name: Print results
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+
+          try:
+              with open("k6-summary.json") as f:
+                  s = json.load(f)
+          except Exception as e:
+              print(f"k6-summary.json could not be read: {e}")
+              sys.exit(0)
+
+          metrics = s.get("metrics", {})
+
+          def is_failed(v):
+              if isinstance(v, dict):
+                  return not v.get("ok", True)
+              if isinstance(v, bool):
+                  return v is True
+              return False
+
+          def stat(name, key):
+              m = metrics.get(name, {})
+              vals = m.get("values", m)
+              v = vals.get(key)
+              return f"{v:.1f}" if isinstance(v, (int, float)) else "-"
+
+          print("\n" + "-" * 60)
+          print("  k6 Threshold Results  (limit finder - informational)")
+          print("-" * 60)
+          for name, m in sorted(metrics.items()):
+              th = m.get("thresholds")
+              if not th:
+                  continue
+              for expr, v in th.items():
+                  print(f"  {'FAIL x' if is_failed(v) else 'PASS  '}  {name}: {expr}")
+
+          print("\n" + "-" * 60)
+          print("  Latencies (avg / p95 / max, ms)")
+          print("-" * 60)
+          for n in ["http_req_duration", "poll_latency", "submit_latency", "join_latency", "end_round_latency"]:
+              print(f"  {n:<18} avg={stat(n,'avg')}  p95={stat(n,'p(95)')}  max={stat(n,'max')}")
+
+          print("\n" + "-" * 60)
+          print("  Load & errors")
+          print("-" * 60)
+          print(f"  http_reqs total   {stat('http_reqs','count')}")
+          print(f"  http_req_failed   {stat('http_req_failed','rate')}")
+          print(f"  game_errors(5xx)  {stat('game_errors','count')}")
+          print(f"  churn_joins       {stat('churn_joins','count')}")
+          print(f"  submit_rate_limited {stat('submit_rate_limited','count')}")
+          print(f"  peak VUs          {stat('vus_max','value')}")
+          print("-" * 60)
+          print("\nNote: this test ramps load until the server degrades; FAIL thresholds")
+          print("and rising end_round_latency/poll_latency show where the limit is.")
+          EOF
+
+      - name: Upload k6 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-stress-${{ github.run_id }}
+          path: |
+            k6-summary.json
+            k6-results.ndjson
+          retention-days: 30

@@ -1,0 +1,160 @@
+name: k6 Full Session (100 players x 30 rounds + mid-game restart)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Backend URL (empty -> RENDER_URL secret)"
+        required: false
+        default: ""
+      admin_key:
+        description: "Admin key"
+        required: false
+        default: "admin123"
+      round_window:
+        description: "Seconds a round stays active (~1 min for players to decide + submit)"
+        required: false
+        default: "25"
+      review_gap:
+        description: "Seconds between rounds (players review results)"
+        required: false
+        default: "3"
+      restart_at_round:
+        description: "Restart the game after this round, then replay the full 30 rounds"
+        required: false
+        default: "2"
+
+env:
+  BASE_URL:         ${{ inputs.server_url      || secrets.RENDER_URL || 'https://simplenewsvendorgame.onrender.com' }}
+  ADMIN_KEY:        ${{ inputs.admin_key       || secrets.ADMIN_KEY  || 'admin123' }}
+  ROUND_WINDOW:     ${{ inputs.round_window    || '25' }}
+  REVIEW_GAP:       ${{ inputs.review_gap      || '3' }}
+  RESTART_AT_ROUND: ${{ inputs.restart_at_round || '2' }}
+  # DURATION is intentionally unset: the script auto-computes the full session length
+  # from (RESTART_AT_ROUND + 30) rounds x (ROUND_WINDOW + REVIEW_GAP) so players cover
+  # the warm-up rounds, the restart, and the whole replayed ~16.5 min game.
+
+jobs:
+  k6:
+    name: "100 players x 30 rounds + restart — full game session"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Install k6 ───────────────────────────────────────────────────────────
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+          k6 version
+
+      # ── Wake up the backend (Render free tier cold start) ───────────────────
+      - name: "Wake up backend"
+        run: |
+          echo "Pinging /health until it responds..."
+          for i in 1 2 3 4 5 6; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 40 "$BASE_URL/health")
+            echo "  Attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && { echo "  Backend is up."; break; }
+            [ "$i" = "6" ] && { echo "FAIL: backend did not respond"; exit 1; }
+            sleep 10
+          done
+
+      # ── Run the full-session load test ──────────────────────────────────────
+      # Heavy load test: thresholds may be crossed on the Render free tier. Results
+      # are informational and do not fail CI (continue-on-error, no propagate step).
+      - name: Run k6 full session
+        id: k6
+        run: |
+          k6 run \
+            --env BASE_URL="$BASE_URL" \
+            --env ADMIN_KEY="$ADMIN_KEY" \
+            --env ROUND_WINDOW="$ROUND_WINDOW" \
+            --env REVIEW_GAP="$REVIEW_GAP" \
+            --env RESTART_AT_ROUND="$RESTART_AT_ROUND" \
+            --summary-export=k6-summary.json \
+            --out json=k6-results.ndjson \
+            k6/game_full_session.js
+        continue-on-error: true
+
+      # ── Report (informational) ───────────────────────────────────────────────
+      - name: Print results
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+
+          try:
+              with open("k6-summary.json") as f:
+                  s = json.load(f)
+          except Exception as e:
+              print(f"k6-summary.json could not be read: {e}")
+              sys.exit(0)
+
+          metrics = s.get("metrics", {})
+
+          # Thresholds live under metrics.<name>.thresholds (not top-level).
+          # Value shape varies by k6 version: classic {"ok": bool} | v2 bare bool (True == breached).
+          def is_failed(v):
+              if isinstance(v, dict):
+                  return not v.get("ok", True)
+              if isinstance(v, bool):
+                  return v is True
+              return False
+
+          def stat(name, key):
+              m = metrics.get(name, {})
+              vals = m.get("values", m)   # nested (classic) or flat (v2)
+              v = vals.get(key)
+              return f"{v:.1f}" if isinstance(v, (int, float)) else "-"
+
+          print("\n" + "-" * 56)
+          print("  k6 Threshold Results  (informational - does not fail CI)")
+          print("-" * 56)
+          for name, m in sorted(metrics.items()):
+              th = m.get("thresholds")
+              if not th:
+                  continue
+              for expr, v in th.items():
+                  print(f"  {'FAIL x' if is_failed(v) else 'PASS  '}  {name}: {expr}")
+
+          print("\n" + "-" * 56)
+          print("  Latencies & errors")
+          print("-" * 56)
+          print(f"  poll_latency     avg={stat('poll_latency','avg')}ms  p95={stat('poll_latency','p(95)')}ms")
+          print(f"  submit_latency   avg={stat('submit_latency','avg')}ms  p95={stat('submit_latency','p(95)')}ms")
+          print(f"  game_errors(5xx) {stat('game_errors','count')}")
+          print(f"  http_reqs total  {stat('http_reqs','count')}")
+          print(f"  http_req_failed  {stat('http_req_failed','rate')}")
+
+          print("\n" + "-" * 56)
+          print("  Gameplay counters")
+          print("-" * 56)
+          print(f"  rounds_driven         {stat('rounds_driven','count')}")
+          print(f"  restarts_driven       {stat('restarts_driven','count')}")
+          print(f"  restarts_followed     {stat('restarts_followed','count')}")
+          print(f"  submit_accepted       {stat('submit_accepted','count')}")
+          print(f"  submit_duplicate_400  {stat('submit_duplicate_rejected','count')}")
+          print(f"  submit_rate_limited   {stat('submit_rate_limited','count')}")
+          print("-" * 56)
+          EOF
+
+      # ── Artifact ─────────────────────────────────────────────────────────────
+      - name: Upload k6 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-full-session-${{ github.run_id }}
+          path: |
+            k6-summary.json
+            k6-results.ndjson
+          retention-days: 30

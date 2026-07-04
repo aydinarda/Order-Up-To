@@ -1,0 +1,613 @@
+name: N-Player Concurrent Simulation (50 & 100)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Server URL (boş → RENDER_URL secret)"
+        required: false
+      admin_key:
+        description: "Admin key"
+        required: false
+        default: "admin123"
+
+env:
+  BASE_URL:  ${{ inputs.server_url || secrets.RENDER_URL || 'https://simplenewsvendorgame.onrender.com' }}
+  ADMIN_KEY: ${{ inputs.admin_key  || secrets.ADMIN_KEY  || 'admin123' }}
+
+jobs:
+  simulate:
+    name: "${{ matrix.players }} oyuncu x ${{ matrix.hands }} hand"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      max-parallel: 1        # Sunucuda tek aktif oyun olduğu için sıralı çalıştır
+      matrix:
+        include:
+          - players: 50
+            hands: 5
+          - players: 100
+            hands: 5
+
+    steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install aiohttp
+        run: pip install aiohttp
+
+      - name: Create results directory
+        run: mkdir -p results
+
+      # ── Backend'i uyandır ────────────────────────────────────────────────────
+      - name: "Wake up backend (cold-start)"
+        run: |
+          echo "Pinging /health until it responds..."
+          for i in 1 2 3 4 5 6; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 40 "$BASE_URL/health")
+            echo "  Attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && { echo "  Backend is up."; break; }
+            [ "$i" = "6" ] && { echo "FAIL: backend did not wake up"; exit 1; }
+            sleep 10
+          done
+
+      # ── Simülasyonu çalıştır ─────────────────────────────────────────────────
+      - name: "Run ${{ matrix.players }}-player simulation (${{ matrix.hands }} hands)"
+        env:
+          BASE_URL:  ${{ env.BASE_URL }}
+          ADMIN_KEY: ${{ env.ADMIN_KEY }}
+          N_PLAYERS: ${{ matrix.players }}
+          N_HANDS:   ${{ matrix.hands }}
+          RESULTS_DIR: results
+        run: |
+          python - <<'PYEOF'
+          """
+          N-oyunculu newsvendor simülasyonu.
+
+          Oyun parametreleri (varsayılan):
+            D ~ U(80, 120), ortalama = 100
+            wholesale = 10, retail = 40, salvage = 5
+            Kritik oran CR = (40-10)/(40-5) = 30/35 ≈ 0.857
+            Optimal sipariş (CR): 80 + 0.857 * 40 ≈ 114
+
+          5 strateji grubu (eşit dağılım):
+            Grup 0 – Az sipariş (85)
+            Grup 1 – Temkinli   (95)
+            Grup 2 – Optimal    (114, kritik oran)
+            Grup 3 – Agresif    (122)
+            Grup 4 – Rastgele   (80–120)
+          """
+          import asyncio, aiohttp, time, statistics, random, os, sys, csv, json
+          from datetime import datetime, timezone
+
+          BASE      = os.environ["BASE_URL"].rstrip("/")
+          ADMIN_KEY = os.environ["ADMIN_KEY"]
+          OUT       = os.environ.get("RESULTS_DIR", "results")
+          N_PLAYERS = int(os.environ["N_PLAYERS"])
+          N_HANDS   = int(os.environ["N_HANDS"])
+
+          # Strateji grupları
+          STRATEGIES = ["Az Sipariş (85)", "Temkinli (95)", "Optimal (114)", "Agresif (122)", "Rastgele (80-120)"]
+
+          def order_qty(player_idx):
+              g = player_idx % 5
+              if   g == 0: return 85
+              elif g == 1: return 95
+              elif g == 2: return 114
+              elif g == 3: return 122
+              else:        return random.randint(80, 120)
+
+          # ─── İstek logu ────────────────────────────────────────────────────
+          req_log = []
+
+          def log_req(phase, hand, player, endpoint, method, status, lat_s):
+              req_log.append({
+                  "timestamp":  datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3],
+                  "phase":      phase,
+                  "hand":       hand if hand is not None else "",
+                  "player":     player,
+                  "endpoint":   endpoint,
+                  "method":     method,
+                  "status":     status,
+                  "latency_ms": round(lat_s * 1000, 1),
+                  "ok":         1 if 200 <= (status or 0) < 300 else 0,
+              })
+
+          # ─── HTTP yardımcıları ──────────────────────────────────────────────
+          def _parse(text, status):
+              raw = text.strip() if text else ""
+              if not raw:
+                  return {"_err": "boş yanıt", "_status": status}
+              try:
+                  parsed = json.loads(raw)
+                  if not isinstance(parsed, dict):
+                      return {"_err": f"dict değil: {type(parsed).__name__}", "_raw": raw[:200]}
+                  return parsed
+              except json.JSONDecodeError as e:
+                  return {"_err": f"JSON parse: {e}", "_raw": raw[:200]}
+
+          async def post(sess, path, phase="", hand=None, player="", **kw):
+              t0 = time.perf_counter()
+              try:
+                  async with sess.post(BASE + path, **kw) as r:
+                      text = await r.text()
+                      lat  = time.perf_counter() - t0
+                      data = _parse(text, r.status)
+                      log_req(phase, hand, player, path, "POST", r.status, lat)
+                      return data, lat, r.status
+              except Exception as e:
+                  lat = time.perf_counter() - t0
+                  log_req(phase, hand, player, path, "POST", 0, lat)
+                  return {"_err": str(e)}, lat, 0
+
+          async def get(sess, path, phase="", hand=None, player="", **kw):
+              t0 = time.perf_counter()
+              try:
+                  async with sess.get(BASE + path, **kw) as r:
+                      text = await r.text()
+                      lat  = time.perf_counter() - t0
+                      data = _parse(text, r.status)
+                      log_req(phase, hand, player, path, "GET", r.status, lat)
+                      return data, lat, r.status
+              except Exception as e:
+                  lat = time.perf_counter() - t0
+                  log_req(phase, hand, player, path, "GET", 0, lat)
+                  return {"_err": str(e)}, lat, 0
+
+          def require(d, *keys, label=""):
+              if not isinstance(d, dict):
+                  print(f"  FATAL [{label}]: dict değil: {d}", flush=True)
+                  sys.exit(1)
+              if "_err" in d:
+                  print(f"  FATAL [{label}]: {d}", flush=True)
+                  sys.exit(1)
+              for k in keys:
+                  if k not in d:
+                      print(f"  FATAL [{label}]: '{k}' anahtarı eksik – {d}", flush=True)
+                      sys.exit(1)
+
+          # ─── İstatistik yardımcıları ────────────────────────────────────────
+          def pct(lst, p):
+              if not lst: return 0.0
+              s = sorted(lst)
+              return s[min(int(len(s) * p / 100), len(s) - 1)]
+
+          def lat_stats(lats_s):
+              if not lats_s:
+                  return {"min": 0, "avg": 0, "p50": 0, "p95": 0, "max": 0, "n": 0}
+              ms = [x * 1000 for x in lats_s]
+              return {
+                  "min": round(min(ms),             1),
+                  "avg": round(statistics.mean(ms), 1),
+                  "p50": round(pct(ms, 50),         1),
+                  "p95": round(pct(ms, 95),         1),
+                  "max": round(max(ms),             1),
+                  "n":   len(ms),
+              }
+
+          def lat_line(st, label):
+              return (
+                  f"  {label:<30}: "
+                  f"min={st['min']:6.0f}ms  avg={st['avg']:6.0f}ms  "
+                  f"p95={st['p95']:6.0f}ms  max={st['max']:6.0f}ms  "
+                  f"n={st['n']}"
+              )
+
+          # ═══════════════════════════════════════════════════════════════════
+          async def main():
+              sim_start = datetime.now(timezone.utc)
+              total_t0  = time.perf_counter()
+              timeout   = aiohttp.ClientTimeout(total=30)
+              connector = aiohttp.TCPConnector(limit=120, force_close=False)
+
+              join_rows  = []
+              hand_rows  = []
+              final_rows = []
+              demand_log = []   # her hand'in gerçekleşen talebini tutar
+
+              async with aiohttp.ClientSession(timeout=timeout, connector=connector) as sess:
+
+                  # ═══ AŞAMA 1: Oyun oluştur (admin) ═════════════════════════
+                  print("\n" + "=" * 66)
+                  print(f"AŞAMA 1 – Oyun oluştur ({N_PLAYERS} oyuncu, {N_HANDS} hand)")
+                  d, lat, st = await post(sess, "/start-game", phase="setup", json={
+                      "nickname":    "admin_sim",
+                      "adminKey":    ADMIN_KEY,
+                      "handsPerTur": N_HANDS,
+                      "totalTurs":   1,
+                  })
+                  if st != 200:
+                      print(f"  FATAL start-game/admin: HTTP {st}  body={d}", flush=True)
+                      sys.exit(1)
+                  require(d, "gameId", "adminToken", label="start-game/admin")
+                  game_id     = d["gameId"]
+                  admin_token = d["adminToken"]
+                  admin_pid   = d["playerId"]
+                  print(f"  gameId={game_id}  latency={lat*1000:.0f}ms")
+
+                  # ═══ AŞAMA 2: N oyuncu eş zamanlı katılır ═══════════════════
+                  print("\n" + "=" * 66)
+                  print(f"AŞAMA 2 – {N_PLAYERS} oyuncu eş zamanlı katılıyor")
+                  t0 = time.perf_counter()
+                  join_results = await asyncio.gather(*[
+                      post(sess, "/start-game",
+                           phase="join", player=f"Player_{i+1:03d}",
+                           json={"nickname": f"P{i+1:03d}", "gameId": game_id})
+                      for i in range(N_PLAYERS)
+                  ])
+                  join_wall = time.perf_counter() - t0
+
+                  players, join_lats, join_errs = {}, [], 0
+                  for i, (data, lat, st) in enumerate(join_results):
+                      success = st == 200 and data and "playerId" in data
+                      join_rows.append({
+                          "player_index":   i,
+                          "nickname":       f"P{i+1:03d}",
+                          "strategy_group": i % 5,
+                          "strategy_name":  STRATEGIES[i % 5],
+                          "player_id":      data.get("playerId", "") if success else "",
+                          "status_code":    st,
+                          "latency_ms":     round(lat * 1000, 1),
+                          "success":        1 if success else 0,
+                          "error":          "" if success else str(data),
+                      })
+                      if success:
+                          players[i] = {"player_id": data["playerId"], "nickname": f"P{i+1:03d}"}
+                          join_lats.append(lat)
+                      else:
+                          join_errs += 1
+                          print(f"  ✗ P{i+1:03d} katılım başarısız: HTTP {st}")
+
+                  js = lat_stats(join_lats)
+                  print(f"  Duvar süresi   : {join_wall:.2f}s")
+                  print(f"  Başarılı       : {len(players)}/{N_PLAYERS}  |  Hata: {join_errs}")
+                  print(lat_line(js, "  JOIN gecikmesi"))
+                  if len(players) < 2:
+                      print("FATAL: en az 2 oyuncu gerekli", flush=True)
+                      sys.exit(1)
+
+                  pid_list  = [players[i]["player_id"] for i in sorted(players)]
+                  all_sub_lats   = []
+                  all_state_lats = []
+
+                  # ═══ AŞAMA 3: Tüm handları oyna ════════════════════════════
+                  for hand in range(1, N_HANDS + 1):
+                      print("\n" + "-" * 66)
+                      print(f"  HAND {hand}/{N_HANDS}")
+                      hand_t0 = time.perf_counter()
+
+                      # 3a. Admin turu başlatır
+                      d, start_lat, st = await post(sess, "/start-round", phase="start-round", hand=hand,
+                                                    json={"gameId": game_id, "adminToken": admin_token})
+                      if st != 200:
+                          print(f"  FATAL start-round h{hand}: HTTP {st}  body={d}", flush=True)
+                          sys.exit(1)
+                      print(f"  start-round: {start_lat*1000:.0f}ms  phase={d.get('roundPhase','?')}")
+
+                      # 3b. Tüm oyuncular eş zamanlı /game-state çeker (opsiyonel ama gerçekçi)
+                      t0 = time.perf_counter()
+                      state_res = await asyncio.gather(*[
+                          get(sess, f"/game-state?gameId={game_id}&playerId={pid}",
+                              phase="poll", hand=hand, player=pid)
+                          for pid in pid_list
+                      ])
+                      state_wall = time.perf_counter() - t0
+                      state_lats = [lat for _, lat, st2 in state_res if st2 == 200]
+                      state_errs = sum(1 for _, _, st2 in state_res if st2 != 200)
+                      ss = lat_stats(state_lats)
+                      all_state_lats.extend(state_lats)
+                      print(f"  GET /game-state: duvar={state_wall:.2f}s  hata={state_errs}")
+                      print(lat_line(ss, "    gecikme"))
+
+                      # 3c. Tüm oyuncular eş zamanlı sipariş verir
+                      t0 = time.perf_counter()
+                      submit_res = await asyncio.gather(*[
+                          post(sess, "/submit-order",
+                               phase="submit", hand=hand, player=pid,
+                               json={"gameId": game_id, "playerId": pid,
+                                     "orderQuantity": order_qty(idx)})
+                          for idx, pid in enumerate(pid_list)
+                      ])
+                      submit_wall = time.perf_counter() - t0
+                      sub_lats  = [lat for _, lat, st2 in submit_res if st2 == 200]
+                      sub_errs  = sum(1 for _, _, st2 in submit_res if st2 != 200)
+                      subs = lat_stats(sub_lats)
+                      all_sub_lats.extend(sub_lats)
+                      print(f"  POST /submit-order: duvar={submit_wall:.2f}s  hata={sub_errs}")
+                      print(lat_line(subs, "    gecikme"))
+
+                      # 3d. Admin turu bitirir
+                      d, end_lat, st = await post(sess, "/end-round", phase="end-round", hand=hand,
+                                                  json={"gameId": game_id, "adminToken": admin_token})
+                      if st != 200:
+                          print(f"  FATAL end-round h{hand}: HTTP {st}  body={d}", flush=True)
+                          sys.exit(1)
+
+                      realized = d.get("realizedDemand")
+                      demand_log.append({"hand": hand, "realizedDemand": realized})
+                      print(f"  end-round: {end_lat*1000:.0f}ms  gerçekleşen talep={realized}")
+
+                      hand_wall = time.perf_counter() - hand_t0
+                      hand_rows.append({
+                          "hand":              hand,
+                          "realized_demand":   realized,
+                          "hand_wall_s":       round(hand_wall,    3),
+                          "start_round_ms":    round(start_lat * 1000, 1),
+                          "state_wall_s":      round(state_wall,   3),
+                          "state_min_ms":      ss["min"],
+                          "state_avg_ms":      ss["avg"],
+                          "state_p95_ms":      ss["p95"],
+                          "state_max_ms":      ss["max"],
+                          "state_errors":      state_errs,
+                          "submit_wall_s":     round(submit_wall,  3),
+                          "submit_min_ms":     subs["min"],
+                          "submit_avg_ms":     subs["avg"],
+                          "submit_p95_ms":     subs["p95"],
+                          "submit_max_ms":     subs["max"],
+                          "submit_errors":     sub_errs,
+                          "end_round_ms":      round(end_lat * 1000, 1),
+                          "_state_lats":       state_lats,
+                          "_sub_lats":         sub_lats,
+                      })
+
+                  # ═══ AŞAMA 4: Son liderboard ════════════════════════════════
+                  print("\n" + "=" * 66)
+                  print("AŞAMA 4 – Son liderboard")
+                  lb_d, _, _ = await get(sess, f"/leaderboard?gameId={game_id}", phase="leaderboard")
+                  lb_rows = lb_d.get("leaderboard", [])
+                  pid_to_idx = {players[i]["player_id"]: i for i in players}
+
+                  if lb_rows:
+                      print(f"\n  {'Sıra':<5} {'Nickname':<10} {'Strateji':<22} {'Kar':>12}")
+                      print(f"  {'─'*5} {'─'*10} {'─'*22} {'─'*12}")
+                      for row in lb_rows[:20]:
+                          print(f"  {row['rank']:<5} {row['nickname']:<10} "
+                                f"{'':22} ${row['cumulativeProfit']:>10,}")
+                      if len(lb_rows) > 20:
+                          print(f"  ... +{len(lb_rows)-20} daha")
+                  for row in lb_rows:
+                      # strategy bilgisi için playerId'ye ihtiyacımız var – leaderboard'da yok
+                      final_rows.append({
+                          "rank":             row["rank"],
+                          "nickname":         row["nickname"],
+                          "cumulative_profit": row["cumulativeProfit"],
+                          "rounds_played":    row["roundsPlayed"],
+                      })
+
+                  # ═══ AŞAMA 5: Admin round history doğrula (yeni özellik) ════
+                  print("\n" + "=" * 66)
+                  print("AŞAMA 5 – Admin round history doğrulama")
+                  gs_d, _, _ = await get(
+                      sess,
+                      f"/game-state?gameId={game_id}&adminToken={admin_token}&playerId={admin_pid}",
+                      phase="verify"
+                  )
+                  rh = gs_d.get("roundHistory", [])
+                  assert len(rh) == N_HANDS, \
+                      f"Beklenen {N_HANDS} kayıt, bulunan {len(rh)}"
+                  for entry in rh:
+                      assert isinstance(entry["realizedDemand"], (int, float)), \
+                          f"realizedDemand sayı değil: {entry}"
+                  print(f"  PASS – admin {N_HANDS} hand için gerçekleşen talepleri görebilir")
+                  for entry in rh:
+                      print(f"    Hand {entry['roundNo']}: talep={entry['realizedDemand']}")
+
+              # ═══ Artifact dosyaları yaz ═════════════════════════════════════
+              total_time = time.perf_counter() - total_t0
+
+              # 1. requests_log.csv
+              with open(f"{OUT}/requests_log_{N_PLAYERS}p.csv", "w", newline="") as f:
+                  w = csv.DictWriter(f, fieldnames=[
+                      "timestamp","phase","hand","player",
+                      "endpoint","method","status","latency_ms","ok"
+                  ])
+                  w.writeheader(); w.writerows(req_log)
+
+              # 2. join_results.csv
+              with open(f"{OUT}/join_results_{N_PLAYERS}p.csv", "w", newline="") as f:
+                  w = csv.DictWriter(f, fieldnames=[
+                      "player_index","nickname","strategy_group","strategy_name",
+                      "player_id","status_code","latency_ms","success","error"
+                  ])
+                  w.writeheader(); w.writerows(join_rows)
+
+              # 3. hands_timing.csv
+              hand_fields = [
+                  "hand","realized_demand","hand_wall_s","start_round_ms",
+                  "state_wall_s","state_min_ms","state_avg_ms","state_p95_ms","state_max_ms","state_errors",
+                  "submit_wall_s","submit_min_ms","submit_avg_ms","submit_p95_ms","submit_max_ms","submit_errors",
+                  "end_round_ms",
+              ]
+              with open(f"{OUT}/hands_timing_{N_PLAYERS}p.csv", "w", newline="") as f:
+                  w = csv.DictWriter(f, fieldnames=hand_fields, extrasaction="ignore")
+                  w.writeheader(); w.writerows(hand_rows)
+
+              # 4. leaderboard.csv
+              with open(f"{OUT}/leaderboard_{N_PLAYERS}p.csv", "w", newline="") as f:
+                  w = csv.DictWriter(f, fieldnames=[
+                      "rank","nickname","cumulative_profit","rounds_played"
+                  ], extrasaction="ignore")
+                  w.writeheader(); w.writerows(final_rows)
+
+              # 5. simulation_report.json
+              strat_profits = {i: [] for i in range(5)}
+              for row in join_rows:
+                  if row["success"]:
+                      lb_match = next((x for x in final_rows if x["nickname"] == row["nickname"]), None)
+                      if lb_match:
+                          strat_profits[row["strategy_group"]].append(lb_match["cumulative_profit"])
+
+              strat_analysis = {}
+              for g, profits in strat_profits.items():
+                  if profits:
+                      strat_analysis[STRATEGIES[g]] = {
+                          "n":   len(profits),
+                          "avg": round(sum(profits) / len(profits), 1),
+                          "min": min(profits),
+                          "max": max(profits),
+                      }
+
+              report = {
+                  "meta": {
+                      "sim_start_utc":  sim_start.isoformat(),
+                      "base_url":       BASE,
+                      "n_players":      N_PLAYERS,
+                      "n_hands":        N_HANDS,
+                      "total_time_s":   round(total_time, 2),
+                      "players_joined": len(players),
+                      "join_errors":    join_errs,
+                      "total_requests": len(req_log),
+                      "total_errors":   sum(1 for r in req_log if not r["ok"]),
+                  },
+                  "join_phase": {
+                      "wall_s":  round(join_wall, 3),
+                      "latency": lat_stats(join_lats),
+                  },
+                  "overall_latency": {
+                      "state_GET":    lat_stats(all_state_lats),
+                      "submit_POST":  lat_stats(all_sub_lats),
+                  },
+                  "demand_log": demand_log,
+                  "hands": [
+                      {k: v for k, v in r.items() if not k.startswith("_")}
+                      for r in hand_rows
+                  ],
+                  "strategy_analysis":  strat_analysis,
+                  "leaderboard":        final_rows,
+                  "slowest_requests": sorted(
+                      req_log, key=lambda r: r["latency_ms"], reverse=True
+                  )[:20],
+              }
+              with open(f"{OUT}/simulation_report_{N_PLAYERS}p.json", "w") as f:
+                  json.dump(report, f, indent=2)
+
+              # 6. simulation_summary.txt
+              slowest_hand = max(hand_rows, key=lambda r: r["hand_wall_s"])
+              slowest_sub  = max(hand_rows, key=lambda r: r["submit_wall_s"])
+
+              lines = []
+              def L(s=""): lines.append(s)
+
+              L("=" * 66)
+              L(f"{N_PLAYERS}-OYUNCULU EŞ ZAMANLI SİMÜLASYON – ÖZET")
+              L("=" * 66)
+              L(f"Tarih (UTC)      : {sim_start.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+              L(f"Sunucu           : {BASE}")
+              L(f"Oyuncu sayısı    : {len(players)}/{N_PLAYERS} katıldı")
+              L(f"Hand sayısı      : {N_HANDS}")
+              L(f"Toplam süre      : {total_time:.1f}s")
+              L(f"Toplam istek     : {len(req_log)}")
+              L(f"Toplam hata      : {sum(1 for r in req_log if not r['ok'])}")
+              L()
+              L("─" * 66)
+              L("KATILIM AŞAMASI (eş zamanlı)")
+              L("─" * 66)
+              L(f"  Duvar süresi   : {join_wall:.2f}s")
+              L(f"  Başarılı       : {len(players)}/{N_PLAYERS}  |  Hata: {join_errs}")
+              L(lat_line(lat_stats(join_lats), "  Gecikme"))
+              L()
+              L("─" * 66)
+              L("HAND BAZLI ZAMANLAMA")
+              L("─" * 66)
+              L(f"  {'H':<3} {'Toplam':>7} {'Talep':>7} {'Gönder-D':>9} {'Alt-D':>7} {'End':>7} {'Hata':>5}")
+              L(f"  {'─'*3} {'─'*7} {'─'*7} {'─'*9} {'─'*7} {'─'*7} {'─'*5}")
+              for r in hand_rows:
+                  errs = r["state_errors"] + r["submit_errors"]
+                  flag = " ← EN YAVAŞ" if r["hand"] == slowest_hand["hand"] else ""
+                  L(f"  {r['hand']:<3} {r['hand_wall_s']:>6.2f}s "
+                    f"{str(r['realized_demand']):>7} "
+                    f"{r['submit_wall_s']:>8.2f}s "
+                    f"{r['submit_avg_ms']:>6.0f}ms "
+                    f"{r['end_round_ms']:>6.0f}ms "
+                    f"{errs:>5}{flag}")
+              L()
+              L("─" * 66)
+              L("GECİKME ÖZETİ (tüm handlar)")
+              L("─" * 66)
+              L(lat_line(lat_stats(all_state_lats), "  GET  /game-state"))
+              L(lat_line(lat_stats(all_sub_lats),   "  POST /submit-order"))
+              L()
+              L("─" * 66)
+              L("GERÇEKLEŞEN TALEP GEÇMİŞİ (admin görünümü)")
+              L("─" * 66)
+              for entry in demand_log:
+                  L(f"  Hand {entry['hand']}: talep = {entry['realizedDemand']}")
+              L()
+              L("─" * 66)
+              L("STRATEJİ ANALİZİ (ortalama kümülatif kâr)")
+              L("─" * 66)
+              for name, s in strat_analysis.items():
+                  L(f"  {name:<26}: avg=${s['avg']:>8,.0f}  min=${s['min']:>8,}  max=${s['max']:>8,}  n={s['n']}")
+              L()
+              L("─" * 66)
+              L("DAR BOĞAZ ANALİZİ")
+              L("─" * 66)
+              s_all  = lat_stats(all_state_lats)
+              su_all = lat_stats(all_sub_lats)
+              bottleneck = "submit POST" if su_all["avg"] > s_all["avg"] else "state GET"
+              L(f"  En yavaş hand      : Hand {slowest_hand['hand']}  ({slowest_hand['hand_wall_s']:.2f}s)")
+              L(f"  En yavaş sipariş   : Hand {slowest_sub['hand']}  ({slowest_sub['submit_wall_s']:.2f}s duvar)")
+              L(f"  Avg GET /game-state: {s_all['avg']:.0f}ms")
+              L(f"  Avg POST /submit   : {su_all['avg']:.0f}ms")
+              L(f"  Ana dar boğaz      : {bottleneck}")
+              L()
+              L("─" * 66)
+              L("EN YAVAŞ 15 İSTEK")
+              L("─" * 66)
+              L(f"  {'#':<3} {'Phase':<12} {'H':<3} {'Metod':<5} {'Gecikme':>9} {'HTTP':>5}  Endpoint")
+              for i, req in enumerate(
+                  sorted(req_log, key=lambda r: r["latency_ms"], reverse=True)[:15], 1
+              ):
+                  ep = req["endpoint"]
+                  if len(ep) > 35: ep = "..." + ep[-32:]
+                  L(f"  {i:<3} {req['phase']:<12} {str(req['hand']):<3} "
+                    f"{req['method']:<5} {req['latency_ms']:>8.0f}ms "
+                    f"{req['status']:>5}  {ep}")
+              L()
+              L("─" * 66)
+              L("LİDERBOARD (ilk 20)")
+              L("─" * 66)
+              L(f"  {'Sıra':<5} {'Nickname':<12} {'Kümülatif Kâr':>15} {'Oynadığı Hand':>14}")
+              for row in final_rows[:20]:
+                  L(f"  {row['rank']:<5} {row['nickname']:<12} "
+                    f"${row['cumulative_profit']:>13,} {row['rounds_played']:>14}")
+              if len(final_rows) > 20:
+                  L(f"  ... +{len(final_rows)-20} oyuncu daha")
+              L()
+              L("─" * 66)
+              L("ARTIFACT DOSYALARI")
+              L("─" * 66)
+              L(f"  simulation_summary_{N_PLAYERS}p.txt   – bu rapor")
+              L(f"  requests_log_{N_PLAYERS}p.csv         – tüm HTTP istekleri")
+              L(f"  join_results_{N_PLAYERS}p.csv         – oyuncu başına katılım sonucu")
+              L(f"  hands_timing_{N_PLAYERS}p.csv         – hand bazlı zamanlama")
+              L(f"  leaderboard_{N_PLAYERS}p.csv          – final liderboard")
+              L(f"  simulation_report_{N_PLAYERS}p.json   – tam rapor (makine okunabilir)")
+              L()
+              L("=" * 66)
+              L(f"PASS – {N_PLAYERS} oyunculu simülasyon başarıyla tamamlandı.")
+              L("=" * 66)
+
+              report_text = "\n".join(lines)
+              with open(f"{OUT}/simulation_summary_{N_PLAYERS}p.txt", "w") as f:
+                  f.write(report_text + "\n")
+
+              print("\n\n" + report_text)
+              print(f"\n  Artifact'lar: {OUT}/")
+              print(f"  PASS – {N_PLAYERS} oyunculu simülasyon tamamlandı!")
+
+          asyncio.run(main())
+          PYEOF
+
+      # ── Artifact'ları yükle ──────────────────────────────────────────────────
+      - name: "Upload ${{ matrix.players }}-player artifacts"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "sim-${{ matrix.players }}p-${{ github.run_id }}"
+          path: results/
+          retention-days: 30
