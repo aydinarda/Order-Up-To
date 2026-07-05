@@ -215,7 +215,7 @@ export function playerLoop(data) {
 
   if (gs.roundPhase === "active" && gs.player && !gs.player.submittedThisRound) {
     const s0 = Date.now();
-    const r = post("/submit-order", { gameId: data.gameId, playerId: player.playerId, orderQuantity: chooseOrder(gs.distribution) });
+    const r = post("/submit-order", { gameId: data.gameId, playerId: player.playerId, orderUpTo: chooseOrder(gs.distribution) });
     submitLatency.add(Date.now() - s0);
     if (r.status === 429) submitRateLimited.add(1);
     else if (r.status >= 500) gameErrors.add(1);
@@ -257,7 +257,7 @@ export function abuser(data) {
   } else if (roll < 0.9) {
     // Huge / odd order spam (validated + rate-limited, but still load).
     const p = data.players[Math.floor(Math.random() * data.players.length)];
-    res = post("/submit-order", { gameId: data.gameId, playerId: p.playerId, orderQuantity: Math.floor(Math.random() * 1e9) + 1 });
+    res = post("/submit-order", { gameId: data.gameId, playerId: p.playerId, orderUpTo: Math.floor(Math.random() * 1e9) + 1 });
     if (j(res).error === undefined && res.status === 429) submitRateLimited.add(1);
   } else {
     res = http.get(`${BASE}/health`, HDR);

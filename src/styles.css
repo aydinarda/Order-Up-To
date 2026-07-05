@@ -502,3 +502,174 @@ button.danger:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Order-Up-To additions ---- */
+
+.inventory-strip {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.inventory-stat {
+  flex: 1;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inventory-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.inventory-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.order-preview {
+  margin: 6px 0 0;
+  font-size: 0.9rem;
+  color: var(--accent-dark);
+}
+
+.chip-group {
+  margin-bottom: 8px;
+}
+
+.chip-group-title {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.co2-line {
+  margin-top: 4px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.loss-text {
+  color: #ba2f2f;
+}
+
+.muted-text {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.pareto-card svg {
+  background: var(--surface);
+  border-radius: 10px;
+}
+
+.pareto-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.pareto-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.pareto-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.pareto-hint {
+  margin-top: 6px;
+}
+
+.pipeline-viz {
+  margin: 12px 0;
+}
+
+.pipeline-title {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.pipeline-slots {
+  display: flex;
+  gap: 8px;
+}
+
+.pipeline-slot {
+  flex: 1;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pipeline-slot.filled {
+  border-style: solid;
+  background: #fff;
+}
+
+.pipeline-qty {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pipeline-eta {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.config-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.config-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.config-form input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 0.95rem;
+  background: #fff;
+}
+
+@media (max-width: 640px) {
+  .inventory-strip {
+    flex-direction: column;
+  }
+}

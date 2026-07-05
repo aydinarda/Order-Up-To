@@ -186,7 +186,7 @@ export function concurrentSubmit(data) {
   const r  = post('/submit-order', {
     gameId:        data.gameId,
     playerId:      player.playerId,
-    orderQuantity: qty,
+    orderUpTo: qty,
   });
   submitLatency.add(Date.now() - t0);
 

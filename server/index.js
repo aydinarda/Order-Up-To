@@ -5,7 +5,9 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { sampleDemand } from "./utils/demand.js";
-import { calculateProfit } from "./utils/profit.js";
+import { advancePeriod, createInitialState, DEFAULT_CONFIG } from "./utils/inventory.js";
+import { computeParetoFronts } from "./utils/pareto.js";
+import { createRng, deriveSeed } from "./utils/rng.js";
 import {
   isDbEnabled,
   recordGameCreated,
@@ -17,23 +19,85 @@ import {
 const PORT = Number(process.env.PORT || 4000);
 const DEFAULT_ADMIN_KEY = process.env.ADMIN_KEY || "admin123";
 
-// When a player does not submit, they keep their previous round's order. If they have no
-// previous round yet (first round / joined late), fall back to this default quantity.
-const FALLBACK_ORDER_QUANTITY = 100;
+// When a player does not submit, they keep their previous round's order-up-to level.
+// If they have no previous round yet (first round / joined late), fall back to the
+// configured starting on-hand ("hold steady").
 
-function calculateLeaderboard(players) {
-  return Array.from(players.values())
-    .map((player) => {
-      const cumulativeProfit = player.history.reduce((sum, entry) => sum + entry.profit, 0);
+// Leaderboard = Pareto representation over (cumulative profit, cumulative CO2):
+// rows are annotated with a non-dominated front number and sorted (front asc,
+// profit desc). The same rows feed the client's profit-vs-CO2 scatter.
+function calculateLeaderboard(players, config) {
+  const rows = Array.from(players.values()).map((player) => {
+    const totals = player.history.reduce(
+      (acc, entry) => ({
+        profit: acc.profit + entry.profit,
+        co2: acc.co2 + entry.co2,
+        lost: acc.lost + entry.lost,
+        trucks: acc.trucks + entry.trucks,
+        ordered: acc.ordered + entry.orderQty
+      }),
+      { profit: 0, co2: 0, lost: 0, trucks: 0, ordered: 0 }
+    );
 
-      return {
-        nickname: player.nickname,
-        cumulativeProfit,
-        roundsPlayed: player.history.length
-      };
-    })
-    .sort((a, b) => b.cumulativeProfit - a.cumulativeProfit)
-    .map((row, index) => ({ rank: index + 1, ...row }));
+    return {
+      nickname: player.nickname,
+      cumulativeProfit: totals.profit,
+      cumProfit: totals.profit,
+      cumCo2: totals.co2,
+      cumLost: totals.lost,
+      cumTrucks: totals.trucks,
+      truckFillPct:
+        totals.trucks > 0 ? (totals.ordered / (totals.trucks * config.truckCapacity)) * 100 : null,
+      leftover: player.inventory.onHand + player.inventory.pipeline.reduce((s, q) => s + q, 0),
+      roundsPlayed: player.history.length
+    };
+  });
+
+  return computeParetoFronts(rows).map((row, index) => ({ rank: index + 1, ...row }));
+}
+
+// Admin-tunable economy. leadTime, startingOnHand and seed are frozen once the
+// first round has started (they would corrupt in-flight pipelines / replayability).
+const CONFIG_FIELDS = {
+  leadTime: { integer: true, min: 0, max: 5, preGameOnly: true },
+  price: { integer: false, min: 0.01 },
+  unitCost: { integer: false, min: 0 },
+  holdingCost: { integer: false, min: 0 },
+  truckCapacity: { integer: true, min: 1 },
+  fixedCostPerTruck: { integer: false, min: 0 },
+  co2PerTruck: { integer: false, min: 0 },
+  co2PerUnitHeld: { integer: false, min: 0 },
+  startingOnHand: { integer: true, min: 0, preGameOnly: true },
+  seed: { integer: true, min: 0, max: 0xffffffff, preGameOnly: true }
+};
+
+function parseConfigUpdates(body, gameStarted) {
+  const updates = {};
+
+  for (const [field, rules] of Object.entries(CONFIG_FIELDS)) {
+    if (body[field] === undefined) {
+      continue;
+    }
+
+    if (rules.preGameOnly && gameStarted) {
+      return { error: `${field} can only be changed before the first round starts` };
+    }
+
+    const parsed = Number(body[field]);
+    if (!Number.isFinite(parsed) || (rules.integer && !Number.isInteger(parsed))) {
+      return { error: `${field} must be ${rules.integer ? "an integer" : "a number"}` };
+    }
+    if (rules.min !== undefined && parsed < rules.min) {
+      return { error: `${field} must be at least ${rules.min}` };
+    }
+    if (rules.max !== undefined && parsed > rules.max) {
+      return { error: `${field} cannot exceed ${rules.max}` };
+    }
+
+    updates[field] = parsed;
+  }
+
+  return { updates };
 }
 
 function sanitizeNickname(raw) {
@@ -103,9 +167,18 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         return res.status(403).json({ error: "invalid admin key" });
       }
 
-      const handsPerTur = Math.max(1, Math.min(40, Math.round(Number(req.body?.handsPerTur) || 5)));
+      const handsPerTur = Math.max(1, Math.min(40, Math.round(Number(req.body?.handsPerTur) || 12)));
       // Multi-turn support was removed from the UI; every game is a single turn.
       const totalTurs = 1;
+
+      const { updates, error } = parseConfigUpdates(req.body?.config || {}, false);
+      if (error) {
+        return res.status(400).json({ error });
+      }
+      const config = { ...DEFAULT_CONFIG, ...updates };
+      if (config.seed === undefined) {
+        config.seed = deriveSeed();
+      }
 
       activeGame = {
         id: randomUUID(),
@@ -119,8 +192,9 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         initialHandsPerTur: handsPerTur,
         rounds: Array.from({ length: handsPerTur }, (_, i) => ({ id: i + 1, title: `Round ${i + 1}` })),
         roundPhase: "pending",
-        distribution: { type: "uniform", min: 80, max: 120 },
-        prices: { wholesaleCost: 10, retailPrice: 40, salvagePrice: 5 },
+        distribution: { type: "normal", mean: 100, stdDev: 20, min: 40, max: 160 },
+        config,
+        rand: createRng(config.seed),
         distributionHistory: [],
         roundHistory: [],
         leaderboard: [],
@@ -160,7 +234,10 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       cumulativeProfit: 0,
       overallProfit: 0,
       history: [],
-      turHistory: []
+      turHistory: [],
+      // Late joiners start with a fresh warehouse mid-game — acceptable for a classroom.
+      inventory: createInitialState(activeGame.config),
+      lastS: null
     };
 
     activeGame.players.set(player.id, player);
@@ -184,7 +261,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     });
 
     if (activeGame.roundPhase === "pending") {
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
     }
 
     emitGameEvent(activeGame, "player_joined", {
@@ -200,12 +277,17 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       currentRound: getRoundForGame(activeGame),
       roundPhase: activeGame.roundPhase,
       distribution: activeGame.distribution,
-      prices: activeGame.prices,
+      config: activeGame.config,
       totalRounds: activeGame.handsPerTur,
       totalTurs: activeGame.totalTurs,
       currentTurIndex: activeGame.currentTurIndex,
       roundsPlayed: player.history.length,
-      cumulativeProfit: player.cumulativeProfit
+      cumulativeProfit: player.cumulativeProfit,
+      inventory: {
+        onHand: player.inventory.onHand,
+        inTransit: player.inventory.pipeline.reduce((s, q) => s + q, 0),
+        pipeline: player.inventory.pipeline
+      }
     });
   });
 
@@ -295,8 +377,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     });
   });
 
-  app.post("/set-prices", (req, res) => {
-    const { gameId, adminToken, wholesaleCost, retailPrice, salvagePrice } = req.body || {};
+  app.post("/set-config", (req, res) => {
+    const { gameId, adminToken } = req.body || {};
 
     if (!activeGame || gameId !== activeGame.id) {
       return res.status(400).json({ error: "invalid or inactive game id" });
@@ -307,44 +389,40 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     }
 
     if (activeGame.roundPhase === "active") {
-      return res.status(400).json({ error: "cannot change prices during active round" });
+      return res.status(400).json({ error: "cannot change config during active round" });
     }
 
-    const parsedWholesale = Number(wholesaleCost);
-    const parsedRetail = Number(retailPrice);
-    const parsedSalvage = Number(salvagePrice);
+    const gameStarted = activeGame.roundHistory.length > 0;
+    const { updates, error } = parseConfigUpdates(req.body || {}, gameStarted);
 
-    if (!Number.isFinite(parsedWholesale) || !Number.isFinite(parsedRetail) || !Number.isFinite(parsedSalvage)) {
-      return res.status(400).json({ error: "all prices must be valid numbers" });
+    if (error) {
+      return res.status(400).json({ error });
     }
 
-    if (parsedWholesale <= 0 || parsedRetail <= 0) {
-      return res.status(400).json({ error: "wholesaleCost and retailPrice must be greater than 0" });
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "no config fields to update" });
     }
 
-    if (parsedSalvage < 0) {
-      return res.status(400).json({ error: "salvagePrice cannot be negative" });
+    activeGame.config = { ...activeGame.config, ...updates };
+
+    // Pre-game structural changes reset every player's warehouse and the demand
+    // stream so round 1 starts from the new shape.
+    if (
+      updates.leadTime !== undefined ||
+      updates.startingOnHand !== undefined ||
+      updates.seed !== undefined
+    ) {
+      for (const player of activeGame.players.values()) {
+        player.inventory = createInitialState(activeGame.config);
+      }
+      activeGame.rand = createRng(activeGame.config.seed);
     }
 
-    if (parsedSalvage >= parsedWholesale) {
-      return res.status(400).json({ error: "salvagePrice must be less than wholesaleCost" });
-    }
-
-    if (parsedWholesale >= parsedRetail) {
-      return res.status(400).json({ error: "wholesaleCost must be less than retailPrice" });
-    }
-
-    activeGame.prices = {
-      wholesaleCost: parsedWholesale,
-      retailPrice: parsedRetail,
-      salvagePrice: parsedSalvage
-    };
-
-    emitGameEvent(activeGame, "prices_updated");
+    emitGameEvent(activeGame, "config_updated");
 
     return res.json({
       gameId: activeGame.id,
-      prices: activeGame.prices
+      config: activeGame.config
     });
   });
 
@@ -368,7 +446,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       return res.status(400).json({ error: "round already active" });
     }
 
-    activeGame.activeRoundDemand = sampleDemand(activeGame.distribution);
+    activeGame.activeRoundDemand = sampleDemand(activeGame.distribution, activeGame.rand);
     activeGame.activeRoundOrders = new Map();
     activeGame.roundPhase = "active";
     const startedAt = new Date().toISOString();
@@ -379,7 +457,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       roundId: currentRound.id,
       roundNo: activeGame.currentRoundIndex + 1,
       distribution: activeGame.distribution,
-      prices: activeGame.prices,
+      config: activeGame.config,
       realizedDemand: activeGame.activeRoundDemand,
       startedAt
     });
@@ -397,7 +475,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
   });
 
   app.post("/submit-order", (req, res) => {
-    const { gameId, playerId, orderQuantity } = req.body || {};
+    const { gameId, playerId, orderUpTo } = req.body || {};
 
     if (!activeGame || gameId !== activeGame.id) {
       return res.status(400).json({ error: "invalid or inactive game id" });
@@ -424,9 +502,10 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       return res.status(400).json({ error: "round is not active" });
     }
 
-    const parsedQty = Number(orderQuantity);
-    if (!Number.isInteger(parsedQty) || parsedQty <= 0) {
-      return res.status(400).json({ error: "orderQuantity must be positive integer" });
+    // S = 0 is a legal decision: "order nothing, run the shelves down".
+    const parsedS = Number(orderUpTo);
+    if (!Number.isInteger(parsedS) || parsedS < 0) {
+      return res.status(400).json({ error: "orderUpTo must be a non-negative integer" });
     }
 
     const round = getRoundForGame(activeGame);
@@ -443,7 +522,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundOrders.set(player.id, {
       playerId: player.id,
       nickname: player.nickname,
-      orderQuantity: parsedQty,
+      orderUpTo: parsedS,
       submittedAt: new Date().toISOString()
     });
 
@@ -456,7 +535,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     return res.json({
       accepted: true,
       roundId: round.id,
-      orderQuantity: parsedQty,
+      orderUpTo: parsedS,
       cumulativeProfit: player.cumulativeProfit,
       roundsPlayed: player.history.length,
       totalRounds: activeGame.handsPerTur,
@@ -491,40 +570,50 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     const dbRoundResults = [];
 
     // Record a result for every player so non-submitters also see the round outcome.
-    // No order submitted carries the player's previous round's order forward, or falls
-    // back to FALLBACK_ORDER_QUANTITY when they have no prior round yet.
+    // A missing submission carries the player's previous order-up-to level forward
+    // ("keep the policy running"); with no prior level yet, hold at startingOnHand.
     for (const player of activeGame.players.values()) {
       const order = activeGame.activeRoundOrders.get(player.id);
-      const lastResult = player.history[player.history.length - 1];
-      const orderQuantity = order
-        ? order.orderQuantity
-        : lastResult
-          ? lastResult.orderQuantity
-          : FALLBACK_ORDER_QUANTITY;
+      const orderUpTo = order
+        ? order.orderUpTo
+        : player.lastS ?? activeGame.config.startingOnHand;
 
-      const details = calculateProfit(orderQuantity, realizedDemand, activeGame.prices);
+      const { nextState, result } = advancePeriod(
+        player.inventory,
+        activeGame.config,
+        realizedDemand,
+        orderUpTo
+      );
+
       const roundResult = {
         round: endingRound.id,
         title: endingRound.title,
         distribution: { ...activeGame.distribution },
-        orderQuantity,
         realizedDemand,
-        ...details,
+        ...result,
         createdAt: new Date().toISOString()
       };
 
+      player.inventory = nextState;
+      player.lastS = orderUpTo;
       player.history.push(roundResult);
       player.cumulativeProfit += roundResult.profit;
 
       dbRoundResults.push({
         playerId: player.id,
         nickname: player.nickname,
-        orderQuantity,
+        orderUpTo,
+        orderQty: result.orderQty,
         submittedAt: order ? order.submittedAt : null,
-        sold: roundResult.soldUnits,
-        leftover: roundResult.unsoldUnits,
-        stockout: Math.max(0, realizedDemand - orderQuantity),
-        profit: roundResult.profit
+        arrival: result.arrival,
+        sold: result.sold,
+        lost: result.lost,
+        onHandEnd: result.onHandEnd,
+        inTransit: result.inTransitEnd,
+        trucks: result.trucks,
+        co2Transport: result.transportCo2,
+        co2Storage: result.storageCo2,
+        profit: result.profit
       });
     }
 
@@ -557,7 +646,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       isTurComplete = true;
 
       // Snapshot leaderboard before score reset
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
 
       const completedTurNumber = activeGame.currentTurIndex + 1;
 
@@ -579,7 +668,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         isGameOver = true;
       }
     } else {
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
     }
 
     const nextRound = getRoundForGame(activeGame);
@@ -595,7 +684,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       nextRound,
       roundPhase: activeGame.roundPhase,
       distribution: activeGame.distribution,
-      prices: activeGame.prices,
+      config: activeGame.config,
       leaderboard: activeGame.leaderboard,
       realizedDemand
     });
@@ -639,7 +728,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.roundPhase = "pending";
     activeGame.activeRoundDemand = null;
     activeGame.activeRoundOrders = new Map();
-    activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+    activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
 
     emitGameEvent(activeGame, "game_extended");
 
@@ -651,7 +740,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       totalTurs: activeGame.totalTurs,
       currentTurIndex: activeGame.currentTurIndex,
       distribution: activeGame.distribution,
-      prices: activeGame.prices,
+      config: activeGame.config,
       leaderboard: activeGame.leaderboard
     });
   });
@@ -707,13 +796,17 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         cumulativeProfit: 0,
         overallProfit: 0,
         history: [],
-        turHistory: []
+        turHistory: [],
+        inventory: createInitialState(activeGame.config),
+        lastS: null
       });
     }
 
     // A brand-new game id means DB round writes start clean instead of colliding
     // with the previous run's (game_id, tur_no, round_id) rows. The adminToken is
     // reused so the admin keeps control without broadcasting a new secret.
+    // Re-seeding from the same config.seed replays the identical demand series —
+    // deliberate, so "run it again" debriefs compare strategies on equal terms.
     const restarted = {
       id: newGameId,
       adminToken: activeGame.adminToken,
@@ -727,7 +820,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       rounds: Array.from({ length: handsPerTur }, (_, i) => ({ id: i + 1, title: `Round ${i + 1}` })),
       roundPhase: "pending",
       distribution: { ...activeGame.distribution },
-      prices: { ...activeGame.prices },
+      config: { ...activeGame.config },
+      rand: createRng(activeGame.config.seed),
       distributionHistory: [],
       roundHistory: [],
       leaderboard: [],
@@ -740,7 +834,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       distribution: { ...restarted.distribution },
       updatedAt: createdAt
     });
-    restarted.leaderboard = calculateLeaderboard(restarted.players);
+    restarted.leaderboard = calculateLeaderboard(restarted.players, restarted.config);
 
     activeGame = restarted;
 
@@ -782,7 +876,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       roundPhase: restarted.roundPhase,
       currentRound: getRoundForGame(restarted),
       distribution: restarted.distribution,
-      prices: restarted.prices,
+      config: restarted.config,
       totalRounds: restarted.handsPerTur,
       totalTurs: restarted.totalTurs,
       currentTurIndex: restarted.currentTurIndex,
@@ -815,7 +909,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       totalTurs: activeGame.totalTurs,
       currentTurIndex: activeGame.currentTurIndex,
       distribution: activeGame.distribution,
-      prices: activeGame.prices,
+      config: activeGame.config,
       finished: currentRound === null,
       roundHistory: isValidAdmin ? activeGame.roundHistory : undefined,
       player: player
@@ -828,6 +922,12 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
             history: player.history,
             turHistory: player.turHistory,
             lastRoundResult: player.history[player.history.length - 1] || null,
+            inventory: {
+              onHand: player.inventory.onHand,
+              inTransit: player.inventory.pipeline.reduce((s, q) => s + q, 0),
+              pipeline: player.inventory.pipeline
+            },
+            lastS: player.lastS,
             submittedThisRound:
               activeGame.roundPhase === "active" && activeGame.activeRoundOrders.has(player.id)
           }

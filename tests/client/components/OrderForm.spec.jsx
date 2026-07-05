@@ -3,35 +3,44 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import OrderForm from "../../../src/components/OrderForm.jsx";
 
+const config = { truckCapacity: 100 };
+
 describe("OrderForm", () => {
-  it("submits the entered quantity as a number", async () => {
+  it("submits the entered order-up-to level as a number", async () => {
     const onSubmit = vi.fn();
-    render(<OrderForm onSubmit={onSubmit} disabled={false} />);
+    render(<OrderForm onSubmit={onSubmit} disabled={false} onHand={100} inTransit={50} config={config} />);
 
-    const input = screen.getByLabelText(/order quantity/i);
+    const input = screen.getByLabelText(/order-up-to level/i);
     await userEvent.clear(input);
-    await userEvent.type(input, "120");
-    await userEvent.click(screen.getByRole("button", { name: /submit order/i }));
+    await userEvent.type(input, "300");
+    await userEvent.click(screen.getByRole("button", { name: /submit level/i }));
 
-    expect(onSubmit).toHaveBeenCalledWith(120);
+    expect(onSubmit).toHaveBeenCalledWith(300);
   });
 
-  it("rejects an empty quantity with an error and does not submit", async () => {
+  it("previews the resulting order quantity and truck count from S and IP", async () => {
     const onSubmit = vi.fn();
-    render(<OrderForm onSubmit={onSubmit} disabled={false} />);
+    // IP = onHand + inTransit = 150; S = 400 -> q = 250 -> 3 trucks.
+    render(<OrderForm onSubmit={onSubmit} disabled={false} onHand={100} inTransit={50} config={config} />);
 
-    // An empty number input passes HTML5 constraints but fails the JS check (Number("") === 0).
-    const input = screen.getByLabelText(/order quantity/i);
-    await userEvent.clear(input);
-    await userEvent.click(screen.getByRole("button", { name: /submit order/i }));
+    await userEvent.type(screen.getByLabelText(/order-up-to level/i), "400");
+    expect(screen.getByText(/250 units/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 trucks/i)).toBeInTheDocument();
+  });
+
+  it("rejects an empty level with an error and does not submit", async () => {
+    const onSubmit = vi.fn();
+    render(<OrderForm onSubmit={onSubmit} disabled={false} onHand={0} inTransit={0} config={config} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /submit level/i }));
 
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByText(/positive integer/i)).toBeInTheDocument();
+    expect(screen.getByText(/non-negative integer/i)).toBeInTheDocument();
   });
 
   it("disables the input and button when disabled", () => {
-    render(<OrderForm onSubmit={() => {}} disabled />);
-    expect(screen.getByLabelText(/order quantity/i)).toBeDisabled();
-    expect(screen.getByRole("button", { name: /submit order/i })).toBeDisabled();
+    render(<OrderForm onSubmit={() => {}} disabled onHand={0} inTransit={0} config={config} />);
+    expect(screen.getByLabelText(/order-up-to level/i)).toBeDisabled();
+    expect(screen.getByRole("button", { name: /submit level/i })).toBeDisabled();
   });
 });

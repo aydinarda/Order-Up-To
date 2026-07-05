@@ -59,14 +59,15 @@ describe("dbLogger", () => {
     expect(upserts[0].opts).toEqual({ onConflict: "game_id" });
   });
 
-  it("recordRoundStarted upserts into rounds with distribution + prices", async () => {
+  it("recordRoundStarted upserts into rounds with distribution + config snapshot", async () => {
+    const config = { leadTime: 2, price: 40, unitCost: 10, seed: 42 };
     await recordRoundStarted({
       gameId: "g1",
       turNo: 1,
       roundId: 2,
       roundNo: 2,
       distribution: { type: "uniform", min: 80, max: 120 },
-      prices: { wholesaleCost: 10, retailPrice: 40, salvagePrice: 5 },
+      config,
       realizedDemand: 100,
       startedAt: "2026-01-01T00:00:00Z"
     });
@@ -78,7 +79,8 @@ describe("dbLogger", () => {
       round_id: "2",
       dist_type: "uniform",
       realized_demand: 100,
-      retail_price: 40
+      config_json: config,
+      seed: 42
     });
   });
 
@@ -90,8 +92,38 @@ describe("dbLogger", () => {
       realizedDemand: 100,
       endedAt: "2026-01-01T00:00:00Z",
       results: [
-        { playerId: "p1", nickname: "Alice", orderQuantity: 120, sold: 100, leftover: 20, stockout: 0, profit: 3000, submittedAt: "t1" },
-        { playerId: "p2", nickname: "Bob", orderQuantity: 90, sold: 90, leftover: 0, stockout: 10, profit: 2700, submittedAt: "t2" }
+        {
+          playerId: "p1",
+          nickname: "Alice",
+          orderUpTo: 300,
+          orderQty: 120,
+          arrival: 0,
+          sold: 100,
+          lost: 0,
+          onHandEnd: 200,
+          inTransit: 120,
+          trucks: 2,
+          co2Transport: 200,
+          co2Storage: 100,
+          profit: 3000,
+          submittedAt: "t1"
+        },
+        {
+          playerId: "p2",
+          nickname: "Bob",
+          orderUpTo: 250,
+          orderQty: 90,
+          arrival: 0,
+          sold: 90,
+          lost: 10,
+          onHandEnd: 0,
+          inTransit: 90,
+          trucks: 1,
+          co2Transport: 100,
+          co2Storage: 0,
+          profit: 2700,
+          submittedAt: "t2"
+        }
       ]
     });
 
@@ -105,10 +137,16 @@ describe("dbLogger", () => {
       round_id: "3",
       player_id: "p1",
       nickname: "Alice",
+      order_up_to: 300,
       order_qty: 120,
+      arrival: 0,
       sold: 100,
-      leftover: 20,
-      stockout: 0,
+      lost: 0,
+      on_hand_end: 200,
+      in_transit: 120,
+      trucks: 2,
+      co2_transport: 200,
+      co2_storage: 100,
       profit: 3000,
       submitted_at: "t1"
     });

@@ -13,88 +13,128 @@ async function createGame(app, overrides = {}) {
   return res.body;
 }
 
-// ── /set-prices ───────────────────────────────────────────────────────────────
-test("set-prices updates prices for an admin", async () => {
+// ── /set-config ───────────────────────────────────────────────────────────────
+test("set-config updates economy fields for an admin", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken } = await createGame(app);
 
   const res = await request(app)
-    .post("/set-prices")
-    .send({ gameId, adminToken, wholesaleCost: 12, retailPrice: 50, salvagePrice: 3 });
+    .post("/set-config")
+    .send({ gameId, adminToken, price: 50, unitCost: 12, truckCapacity: 150 });
 
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body.prices, { wholesaleCost: 12, retailPrice: 50, salvagePrice: 3 });
+  assert.equal(res.body.config.price, 50);
+  assert.equal(res.body.config.unitCost, 12);
+  assert.equal(res.body.config.truckCapacity, 150);
+  // Untouched fields keep their defaults.
+  assert.equal(res.body.config.holdingCost, 1);
 });
 
-test("set-prices requires a valid admin token", async () => {
+test("set-config requires a valid admin token", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId } = await createGame(app);
 
   const res = await request(app)
-    .post("/set-prices")
-    .send({ gameId, adminToken: "wrong", wholesaleCost: 12, retailPrice: 50, salvagePrice: 3 });
+    .post("/set-config")
+    .send({ gameId, adminToken: "wrong", price: 50 });
 
   assert.equal(res.status, 403);
 });
 
-test("set-prices rejects an invalid gameId", async () => {
+test("set-config rejects an invalid gameId", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { adminToken } = await createGame(app);
 
   const res = await request(app)
-    .post("/set-prices")
-    .send({ gameId: randomUUID(), adminToken, wholesaleCost: 12, retailPrice: 50, salvagePrice: 3 });
+    .post("/set-config")
+    .send({ gameId: randomUUID(), adminToken, price: 50 });
 
   assert.equal(res.status, 400);
 });
 
-test("set-prices rejects salvage >= wholesale", async () => {
+test("set-config rejects negative values and non-integer integer fields", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken } = await createGame(app);
 
-  const res = await request(app)
-    .post("/set-prices")
-    .send({ gameId, adminToken, wholesaleCost: 10, retailPrice: 40, salvagePrice: 10 });
+  const negative = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, holdingCost: -1 });
+  assert.equal(negative.status, 400);
 
-  assert.equal(res.status, 400);
-  assert.match(res.body.error, /salvage/i);
+  const fractionalTrucks = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, truckCapacity: 99.5 });
+  assert.equal(fractionalTrucks.status, 400);
+
+  const zeroCapacity = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, truckCapacity: 0 });
+  assert.equal(zeroCapacity.status, 400);
 });
 
-test("set-prices rejects wholesale >= retail", async () => {
+test("set-config rejects an empty update", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken } = await createGame(app);
 
-  const res = await request(app)
-    .post("/set-prices")
-    .send({ gameId, adminToken, wholesaleCost: 40, retailPrice: 40, salvagePrice: 5 });
-
-  assert.equal(res.status, 400);
-  assert.match(res.body.error, /retail/i);
-});
-
-test("set-prices rejects non-positive wholesale/retail", async () => {
-  const app = createApp({ adminKey: ADMIN_KEY });
-  const { gameId, adminToken } = await createGame(app);
-
-  const res = await request(app)
-    .post("/set-prices")
-    .send({ gameId, adminToken, wholesaleCost: 0, retailPrice: 40, salvagePrice: 0 });
-
+  const res = await request(app).post("/set-config").send({ gameId, adminToken });
   assert.equal(res.status, 400);
 });
 
-test("set-prices cannot be changed during an active round", async () => {
+test("set-config cannot be changed during an active round", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken } = await createGame(app);
 
   await request(app).post("/start-round").send({ gameId, adminToken });
 
   const res = await request(app)
-    .post("/set-prices")
-    .send({ gameId, adminToken, wholesaleCost: 12, retailPrice: 50, salvagePrice: 3 });
+    .post("/set-config")
+    .send({ gameId, adminToken, price: 50 });
 
   assert.equal(res.status, 400);
   assert.match(res.body.error, /active round/i);
+});
+
+test("leadTime, startingOnHand and seed are frozen once a round has ended", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken } = await createGame(app, { handsPerTur: 3 });
+
+  // Pre-game: structural fields are still changeable and reset inventories.
+  const preGame = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, leadTime: 3, startingOnHand: 200, seed: 7 });
+  assert.equal(preGame.status, 200);
+  assert.equal(preGame.body.config.leadTime, 3);
+
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  for (const frozen of [{ leadTime: 1 }, { startingOnHand: 100 }, { seed: 9 }]) {
+    const res = await request(app)
+      .post("/set-config")
+      .send({ gameId, adminToken, ...frozen });
+    assert.equal(res.status, 400, JSON.stringify(frozen));
+    assert.match(res.body.error, /before the first round/i);
+  }
+
+  // Non-structural fields stay adjustable between rounds (mid-game shock).
+  const midGame = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, co2PerTruck: 200 });
+  assert.equal(midGame.status, 200);
+  assert.equal(midGame.body.config.co2PerTruck, 200);
+});
+
+test("pre-game structural change resets player inventories to the new shape", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app);
+
+  await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, leadTime: 4, startingOnHand: 111 });
+
+  const gs = await request(app).get("/game-state").query({ gameId, playerId });
+  assert.equal(gs.body.player.inventory.onHand, 111);
+  assert.equal(gs.body.player.inventory.pipeline.length, 4);
 });
 
 // ── /submit-order rate limiting ──────────────────────────────────────────────
@@ -105,13 +145,13 @@ test("submit-order is rate limited after 10 attempts per window", async () => {
   // No active round: each request is rejected on phase, but still counts toward the limiter.
   let last;
   for (let i = 0; i < 10; i++) {
-    last = await request(app).post("/submit-order").send({ gameId, playerId, orderQuantity: 100 });
+    last = await request(app).post("/submit-order").send({ gameId, playerId, orderUpTo: 100 });
   }
   assert.notEqual(last.status, 429);
 
   const eleventh = await request(app)
     .post("/submit-order")
-    .send({ gameId, playerId, orderQuantity: 100 });
+    .send({ gameId, playerId, orderUpTo: 100 });
 
   assert.equal(eleventh.status, 429);
   assert.match(eleventh.body.error, /too many requests/i);
@@ -128,7 +168,7 @@ test("game-state exposes submittedThisRound and finished transitions", async () 
   assert.equal(gs.body.player.submittedThisRound, false);
   assert.equal(gs.body.finished, false);
 
-  await request(app).post("/submit-order").send({ gameId, playerId, orderQuantity: 100 });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderUpTo: 100 });
 
   gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.submittedThisRound, true);

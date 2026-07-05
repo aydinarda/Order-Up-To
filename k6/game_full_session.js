@@ -142,14 +142,13 @@ function driveOneRound(state, roundNo, total, dist) {
   const sd = post("/set-distribution", { gameId: state.gameId, adminToken: state.adminToken, ...dist });
   check(sd, { "set-distribution 200": (x) => x.status === 200 });
 
-  // Occasionally change prices too (variety).
+  // Occasionally change economy config too (variety).
   if (roundNo % 4 === 1) {
-    post("/set-prices", {
+    post("/set-config", {
       gameId: state.gameId,
       adminToken: state.adminToken,
-      wholesaleCost: 10,
-      retailPrice: 35 + (roundNo % 3) * 5,
-      salvagePrice: 5
+      price: 35 + (roundNo % 3) * 5,
+      co2PerTruck: 100 + (roundNo % 3) * 20
     });
   }
 
@@ -292,7 +291,7 @@ export function playerLoop(data) {
     const qty = chooseOrder(gs.distribution);
 
     const s0 = Date.now();
-    const r = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderQuantity: qty });
+    const r = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderUpTo: qty });
     submitLatency.add(Date.now() - s0);
 
     if (r.status === 200) submitAccepted.add(1);
@@ -301,7 +300,7 @@ export function playerLoop(data) {
 
     // ~10%: accidental double-submit (the server should reject with 400).
     if (Math.random() < 0.1) {
-      const dup = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderQuantity: qty });
+      const dup = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderUpTo: qty });
       if (dup.status === 400) submitDuplicateRejected.add(1);
       else if (dup.status === 429) submitRateLimited.add(1);
       else if (dup.status >= 500) gameErrors.add(1);

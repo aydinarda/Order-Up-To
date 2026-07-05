@@ -24,17 +24,17 @@ async function request(path, options = {}) {
   return payload;
 }
 
-export function startGame({ nickname, adminKey, handsPerTur }) {
+export function startGame({ nickname, adminKey, handsPerTur, config }) {
   return request("/start-game", {
     method: "POST",
-    body: JSON.stringify({ nickname, adminKey, handsPerTur })
+    body: JSON.stringify({ nickname, adminKey, handsPerTur, config })
   });
 }
 
-export function submitOrder({ gameId, playerId, orderQuantity }) {
+export function submitOrder({ gameId, playerId, orderUpTo }) {
   return request("/submit-order", {
     method: "POST",
-    body: JSON.stringify({ gameId, playerId, orderQuantity })
+    body: JSON.stringify({ gameId, playerId, orderUpTo })
   });
 }
 
@@ -72,8 +72,8 @@ export function setDistribution(params) {
   });
 }
 
-export function setPrices(params) {
-  return request("/set-prices", {
+export function setConfig(params) {
+  return request("/set-config", {
     method: "POST",
     body: JSON.stringify(params)
   });

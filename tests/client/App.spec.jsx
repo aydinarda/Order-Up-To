@@ -10,7 +10,10 @@ vi.mock("../../src/utils/api.js", () => ({
   startRound: vi.fn(),
   endRound: vi.fn(),
   setDistribution: vi.fn(),
-  setPrices: vi.fn()
+  setConfig: vi.fn(),
+  oneMoreHand: vi.fn(),
+  endGame: vi.fn(),
+  restartGame: vi.fn()
 }));
 
 vi.mock("../../src/utils/sessionStorage.js", () => ({
@@ -57,18 +60,29 @@ class MockWebSocket {
   }
 }
 
-const prices = { wholesaleCost: 10, retailPrice: 40, salvagePrice: 5 };
+const config = {
+  leadTime: 2,
+  price: 40,
+  unitCost: 10,
+  holdingCost: 1,
+  truckCapacity: 100,
+  fixedCostPerTruck: 50,
+  co2PerTruck: 100,
+  co2PerUnitHeld: 0.5,
+  startingOnHand: 300
+};
 const distribution = { type: "uniform", min: 80, max: 120 };
+const inventory = { onHand: 300, inTransit: 0, pipeline: [0, 0] };
 
 const baseGameState = {
   gameId: "g1",
   roundPhase: "active",
-  currentRound: { id: 1, title: "Hand 1", distribution },
-  totalRounds: 5,
+  currentRound: { id: 1, title: "Round 1", distribution },
+  totalRounds: 12,
   totalTurs: 1,
   currentTurIndex: 0,
   distribution,
-  prices,
+  config,
   finished: false,
   player: {
     id: "p1",
@@ -79,6 +93,8 @@ const baseGameState = {
     history: [],
     turHistory: [],
     lastRoundResult: null,
+    inventory,
+    lastS: null,
     submittedThisRound: false
   }
 };
@@ -96,8 +112,8 @@ beforeEach(() => {
 describe("App", () => {
   it("shows the join screen when there is no session", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: /everchic fashions/i })).toBeInTheDocument();
-    expect(screen.getByText(/hawaiian shirt newsvendor game/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /island market/i })).toBeInTheDocument();
+    expect(screen.getByText(/order-up-to inventory game/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/nickname/i)).toBeInTheDocument();
   });
 
@@ -115,11 +131,12 @@ describe("App", () => {
       playerId: "p1",
       nickname: "Alice",
       adminToken: undefined,
-      currentRound: { id: 1, title: "Hand 1", distribution },
+      currentRound: { id: 1, title: "Round 1", distribution },
       roundPhase: "active",
       distribution,
-      prices,
-      totalRounds: 5,
+      config,
+      inventory,
+      totalRounds: 12,
       totalTurs: 1,
       currentTurIndex: 0,
       roundsPlayed: 0,
@@ -190,11 +207,12 @@ describe("App", () => {
       playerId: "p1",
       nickname: "Alice",
       adminToken: undefined,
-      currentRound: { id: 1, title: "Hand 1", distribution },
+      currentRound: { id: 1, title: "Round 1", distribution },
       roundPhase: "active",
       distribution,
-      prices,
-      totalRounds: 5,
+      config,
+      inventory,
+      totalRounds: 12,
       totalTurs: 1,
       currentTurIndex: 0,
       roundsPlayed: 0,
@@ -217,7 +235,7 @@ describe("App", () => {
           payload: {
             type: "round_started",
             roundPhase: "active",
-            currentRound: { id: 2, title: "Hand 2", distribution }
+            currentRound: { id: 2, title: "Round 2", distribution }
           }
         })
       });

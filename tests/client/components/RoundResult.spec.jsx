@@ -8,24 +8,35 @@ describe("RoundResult", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("shows the result breakdown and the round profit", () => {
+  it("shows the order-up-to breakdown, lost sales, CO2 and profit", () => {
     const result = {
-      orderQuantity: 120,
+      arrival: 40,
       realizedDemand: 95,
-      soldUnits: 95,
-      unsoldUnits: 25,
+      sold: 95,
+      lost: 5,
+      onHandEnd: 20,
+      orderQty: 150,
+      trucks: 2,
+      truckFillPct: 75,
       revenue: 3800,
-      salvageValue: 125,
-      totalCost: 1200,
-      profit: 2725
+      purchaseCost: 1500,
+      holdingCost: 20,
+      truckCost: 100,
+      transportCo2: 200,
+      storageCo2: 10,
+      profit: 2180,
+      co2: 210
     };
     render(<RoundResult result={result} />);
 
     expect(screen.getByText("Round Result")).toBeInTheDocument();
-    expect(screen.getByText("Order quantity")).toBeInTheDocument();
-    expect(screen.getByText("120")).toBeInTheDocument();
-    expect(screen.getByText("25")).toBeInTheDocument();
+    expect(screen.getByText("Order placed (q)")).toBeInTheDocument();
+    expect(screen.getByText("150")).toBeInTheDocument();
+    expect(screen.getByText("Lost sales")).toBeInTheDocument();
+    expect(screen.getByText(/2 \(75% full\)/)).toBeInTheDocument();
     expect(screen.getByText(/Round profit:/)).toBeInTheDocument();
-    expect(screen.getByText(/\$2,725/)).toBeInTheDocument();
+    expect(screen.getByText(/\$2,180/)).toBeInTheDocument();
+    expect(screen.getByText(/Round CO₂:/)).toBeInTheDocument();
+    expect(screen.getByText(/210 kg/)).toBeInTheDocument();
   });
 });

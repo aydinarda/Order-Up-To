@@ -32,14 +32,14 @@ describe("api request wrapper", () => {
     await expect(startGame({ nickname: "Alice" })).rejects.toThrow("this username is taken");
   });
 
-  it("submitOrder sends gameId, playerId and orderQuantity", async () => {
+  it("submitOrder sends gameId, playerId and orderUpTo", async () => {
     mockJson({ accepted: true });
 
-    await submitOrder({ gameId: "g1", playerId: "p1", orderQuantity: 100 });
+    await submitOrder({ gameId: "g1", playerId: "p1", orderUpTo: 300 });
 
     const [url, options] = fetch.mock.calls[0];
     expect(url).toMatch(/\/submit-order$/);
-    expect(JSON.parse(options.body)).toEqual({ gameId: "g1", playerId: "p1", orderQuantity: 100 });
+    expect(JSON.parse(options.body)).toEqual({ gameId: "g1", playerId: "p1", orderUpTo: 300 });
   });
 
   it("fetchGameState builds a query string from the params", async () => {

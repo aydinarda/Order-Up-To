@@ -6,7 +6,15 @@ function formatMoney(value) {
   }).format(value);
 }
 
+function formatCo2(value) {
+  return `${Math.round(value)} kg`;
+}
+
+// Ranked by Pareto front first (front 1 = undominated on profit + CO2),
+// then by profit within a front.
 function Leaderboard({ rows, title }) {
+  const hasFronts = rows.some((row) => row.front !== undefined);
+
   return (
     <section className="card">
       <h3>{title}</h3>
@@ -17,16 +25,26 @@ function Leaderboard({ rows, title }) {
           <thead>
             <tr>
               <th>Rank</th>
+              {hasFronts && <th>Front</th>}
               <th>Nickname</th>
-              <th>Cumulative Profit</th>
+              <th>Profit</th>
+              {hasFronts && <th>CO₂</th>}
+              {hasFronts && <th>Lost sales</th>}
+              {hasFronts && <th>Truck fill</th>}
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={`${row.nickname}-${row.rank}`}>
                 <td>{row.rank}</td>
+                {hasFronts && <td>{row.front}</td>}
                 <td>{row.nickname}</td>
                 <td>{formatMoney(row.cumulativeProfit)}</td>
+                {hasFronts && <td>{row.cumCo2 !== undefined ? formatCo2(row.cumCo2) : "—"}</td>}
+                {hasFronts && <td>{row.cumLost ?? "—"}</td>}
+                {hasFronts && (
+                  <td>{row.truckFillPct != null ? `${Math.round(row.truckFillPct)}%` : "—"}</td>
+                )}
               </tr>
             ))}
           </tbody>

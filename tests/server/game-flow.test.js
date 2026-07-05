@@ -176,13 +176,13 @@ test("player can submit demand while round is active", async () => {
   const submit = await request(app).post("/submit-order").send({
     gameId: createRoom.body.gameId,
     playerId: playerJoin.body.playerId,
-    orderQuantity: 1200
+    orderUpTo: 1200
   });
 
   assert.equal(submit.status, 200);
   assert.equal(submit.body.accepted, true);
   assert.equal(submit.body.roundId, 1);
-  assert.equal(submit.body.orderQuantity, 1200);
+  assert.equal(submit.body.orderUpTo, 1200);
   assert.equal(submit.body.roundPhase, "active");
   assert.equal(submit.body.cumulativeProfit, 0);
 });
@@ -203,7 +203,7 @@ test("admin can end round and leaderboard is returned", async () => {
   await request(app).post("/submit-order").send({
     gameId: createRoom.body.gameId,
     playerId: createRoom.body.playerId,
-    orderQuantity: 1000
+    orderUpTo: 1000
   });
 
   const endRound = await request(app).post("/end-round").send({
@@ -242,7 +242,7 @@ test("leaderboard does not update during active round and updates after round en
   const submitResponse = await request(app).post("/submit-order").send({
     gameId: admin.body.gameId,
     playerId: user.body.playerId,
-    orderQuantity: 1000
+    orderUpTo: 1000
   });
 
   assert.equal(submitResponse.status, 200);
@@ -275,7 +275,8 @@ test("can play 5 turns back-to-back and finish game", async () => {
 
   const createRoom = await request(app).post("/start-game").send({
     nickname: "admin-player",
-    adminKey: ADMIN_KEY
+    adminKey: ADMIN_KEY,
+    handsPerTur: 5
   });
 
   const gameId = createRoom.body.gameId;
@@ -297,7 +298,7 @@ test("can play 5 turns back-to-back and finish game", async () => {
     const submitResponse = await request(app).post("/submit-order").send({
       gameId,
       playerId,
-      orderQuantity: 1000 + turn * 10
+      orderUpTo: 1000 + turn * 10
     });
 
     assert.equal(submitResponse.status, 200);
@@ -359,7 +360,7 @@ test("a joined user can complete all 5 rounds", async () => {
     const submitResponse = await request(app).post("/submit-order").send({
       gameId,
       playerId: joinedUserId,
-      orderQuantity: 900 + round * 25
+      orderUpTo: 900 + round * 25
     });
 
     assert.equal(submitResponse.status, 200);
@@ -402,8 +403,8 @@ test("admin can change min-max and joined user sees updated distribution", async
   });
 
   assert.equal(userJoin.status, 200);
-  assert.equal(userJoin.body.distribution.min, 80);
-  assert.equal(userJoin.body.distribution.max, 120);
+  assert.equal(userJoin.body.distribution.type, "normal");
+  assert.equal(userJoin.body.distribution.mean, 100);
 
   const distributionUpdate = await request(app).post("/set-distribution").send({
     gameId: admin.body.gameId,
@@ -436,7 +437,7 @@ test("admin can change min-max and joined user sees updated distribution", async
   const userSubmit = await request(app).post("/submit-order").send({
     gameId: admin.body.gameId,
     playerId: userJoin.body.playerId,
-    orderQuantity: 1000
+    orderUpTo: 1000
   });
 
   assert.equal(userSubmit.status, 200);
@@ -489,7 +490,7 @@ test("leaderboard is accessible at game start for admin and user, and during rou
     const adminSubmit = await request(app).post("/submit-order").send({
       gameId: admin.body.gameId,
       playerId: admin.body.playerId,
-      orderQuantity: 1000 + round
+      orderUpTo: 1000 + round
     });
 
     assert.equal(adminSubmit.status, 200);
@@ -497,7 +498,7 @@ test("leaderboard is accessible at game start for admin and user, and during rou
     const userSubmit = await request(app).post("/submit-order").send({
       gameId: user.body.gameId,
       playerId: user.body.playerId,
-      orderQuantity: 950 + round
+      orderUpTo: 950 + round
     });
 
     assert.equal(userSubmit.status, 200);
@@ -548,7 +549,7 @@ test("demand is hidden from UI when round is active, visible only after end-roun
   const submitResponse = await request(app).post("/submit-order").send({
     gameId,
     playerId,
-    orderQuantity: 1000
+    orderUpTo: 1000
   });
 
   assert.equal(submitResponse.status, 200);
@@ -602,14 +603,14 @@ test("all submitted players receive same realized demand for the round", async (
   const adminSubmit = await request(app).post("/submit-order").send({
     gameId: admin.body.gameId,
     playerId: admin.body.playerId,
-    orderQuantity: 1000
+    orderUpTo: 1000
   });
   assert.equal(adminSubmit.status, 200);
 
   const userSubmit = await request(app).post("/submit-order").send({
     gameId: admin.body.gameId,
     playerId: user.body.playerId,
-    orderQuantity: 900
+    orderUpTo: 900
   });
   assert.equal(userSubmit.status, 200);
 
@@ -652,7 +653,7 @@ test("cumulative profit remains unchanged until round ends", async () => {
   const submit = await request(app).post("/submit-order").send({
     gameId: admin.body.gameId,
     playerId: admin.body.playerId,
-    orderQuantity: 1000
+    orderUpTo: 1000
   });
   assert.equal(submit.status, 200);
 
@@ -717,7 +718,7 @@ test("joined users see admin start/end round changes via game-state", async () =
   await request(app).post("/submit-order").send({
     gameId: user.body.gameId,
     playerId: user.body.playerId,
-    orderQuantity: 1000
+    orderUpTo: 1000
   });
 
   const endRoundResponse = await request(app).post("/end-round").send({
@@ -996,7 +997,8 @@ test("non-submitter gets the fallback order quantity on the first round", async 
 
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.history.length, 1);
-  assert.equal(gs.body.player.history[0].orderQuantity, 100);
+  // With no prior submission the fallback is "hold steady at startingOnHand".
+  assert.equal(gs.body.player.history[0].orderUpTo, 300);
 });
 
 test("non-submitter carries forward the previous round's order quantity", async () => {
@@ -1011,7 +1013,7 @@ test("non-submitter carries forward the previous round's order quantity", async 
 
   // Round 1: submit 150.
   await request(app).post("/start-round").send({ gameId, adminToken });
-  await request(app).post("/submit-order").send({ gameId, playerId, orderQuantity: 150 });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderUpTo: 150 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
   // Round 2: no submission -> carries 150 forward.
@@ -1020,10 +1022,10 @@ test("non-submitter carries forward the previous round's order quantity", async 
 
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.history.length, 2);
-  assert.equal(gs.body.player.history[0].orderQuantity, 150);
-  assert.equal(gs.body.player.history[1].orderQuantity, 150);
-  // Carrying 150 (>= max demand of the default uniform[80,120]) yields a positive profit,
-  // not the zero the old `: 0` default produced.
+  assert.equal(gs.body.player.history[0].orderUpTo, 150);
+  assert.equal(gs.body.player.history[1].orderUpTo, 150);
+  // Selling from the starting stock at a 4x margin comfortably outweighs the
+  // small top-up order and holding, so the carried-forward round stays profitable.
   assert.ok(gs.body.player.history[1].profit > 0);
 });
 
@@ -1044,8 +1046,8 @@ test("a player who never submits gets the fallback every round", async () => {
 
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.history.length, 2);
-  assert.equal(gs.body.player.history[0].orderQuantity, 100);
-  assert.equal(gs.body.player.history[1].orderQuantity, 100);
+  assert.equal(gs.body.player.history[0].orderUpTo, 300);
+  assert.equal(gs.body.player.history[1].orderUpTo, 300);
 });
 
 test("one more round still carries forward the previous order for a non-submitter", async () => {
@@ -1059,11 +1061,11 @@ test("one more round still carries forward the previous order for a non-submitte
 
   // Play the whole game; the final submitted order is 200.
   await request(app).post("/start-round").send({ gameId, adminToken });
-  await request(app).post("/submit-order").send({ gameId, playerId, orderQuantity: 150 });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderUpTo: 150 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
   await request(app).post("/start-round").send({ gameId, adminToken });
-  await request(app).post("/submit-order").send({ gameId, playerId, orderQuantity: 200 });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderUpTo: 200 });
   const finalEnd = await request(app).post("/end-round").send({ gameId, adminToken });
   assert.equal(finalEnd.body.finished, true); // game over: server reset player.history
 
@@ -1078,5 +1080,5 @@ test("one more round still carries forward the previous order for a non-submitte
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
   const lastTur = gs.body.player.turHistory[gs.body.player.turHistory.length - 1];
   assert.equal(lastTur.rounds.length, 3);
-  assert.equal(lastTur.rounds[2].orderQuantity, 200);
+  assert.equal(lastTur.rounds[2].orderUpTo, 200);
 });

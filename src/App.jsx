@@ -3,6 +3,8 @@ import RoundInfo from "./components/RoundInfo";
 import OrderForm from "./components/OrderForm";
 import RoundResult from "./components/RoundResult";
 import Leaderboard from "./components/Leaderboard";
+import ParetoScatter from "./components/ParetoScatter";
+import PipelineViz from "./components/PipelineViz";
 import ProgressBar from "./components/ProgressBar";
 import EmojiRain from "./components/EmojiRain";
 import {
@@ -12,8 +14,8 @@ import {
   fetchLeaderboard,
   oneMoreHand,
   restartGame,
+  setConfig,
   setDistribution,
-  setPrices,
   startGame,
   startRound,
   submitOrder
@@ -26,6 +28,29 @@ import {
   updateUrlWithSession,
   getSessionFromUrl
 } from "./utils/sessionStorage";
+
+// Admin-tunable economy fields; the draft holds raw input strings. leadTime and
+// startingOnHand are frozen server-side once the first round has ended.
+const CONFIG_FIELD_DEFS = [
+  { key: "leadTime", label: "Lead time (rounds)", preGameOnly: true },
+  { key: "price", label: "Price ($/unit)" },
+  { key: "unitCost", label: "Unit cost ($/unit)" },
+  { key: "holdingCost", label: "Holding ($/unit/round)" },
+  { key: "truckCapacity", label: "Truck capacity (units)" },
+  { key: "fixedCostPerTruck", label: "Truck cost ($/truck)" },
+  { key: "co2PerTruck", label: "CO₂ per truck (kg)" },
+  { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" },
+  { key: "startingOnHand", label: "Starting on-hand", preGameOnly: true }
+];
+
+function draftFromConfig(config) {
+  const draft = {};
+  for (const { key } of CONFIG_FIELD_DEFS) {
+    draft[key] = String(config?.[key] ?? "");
+  }
+  return draft;
+}
+
 function App() {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
   const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || API_BASE_URL.replace(/^http/, "ws");
@@ -38,9 +63,9 @@ function App() {
   const [adminToken, setAdminToken] = useState("");
   const [gameId, setGameId] = useState("");
   const [playerId, setPlayerId] = useState("");
-  const [totalRounds, setTotalRounds] = useState(5);
+  const [totalRounds, setTotalRounds] = useState(12);
   const [turHistory, setTurHistory] = useState([]);
-  const [handsPerTurInput, setHandsPerTurInput] = useState("5");
+  const [handsPerTurInput, setHandsPerTurInput] = useState("12");
   const [currentRound, setCurrentRound] = useState(null);
   const [roundPhase, setRoundPhase] = useState("pending");
   const [distributionType, setDistributionType] = useState("uniform");
@@ -49,10 +74,10 @@ function App() {
   const [distributionMean, setDistributionMean] = useState("100");
   const [distributionStdDev, setDistributionStdDev] = useState("10");
   const [hasUnsavedDistributionChanges, setHasUnsavedDistributionChanges] = useState(false);
-  const [wholesaleCost, setWholesaleCost] = useState("10");
-  const [retailPrice, setRetailPrice] = useState("40");
-  const [salvagePrice, setSalvagePrice] = useState("5");
-  const [hasUnsavedPriceChanges, setHasUnsavedPriceChanges] = useState(false);
+  const [gameConfig, setGameConfig] = useState(null);
+  const [configDraft, setConfigDraft] = useState(draftFromConfig(null));
+  const [hasUnsavedConfigChanges, setHasUnsavedConfigChanges] = useState(false);
+  const [inventory, setInventory] = useState(null);
   const [lastRoundResult, setLastRoundResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [leaderboardRows, setLeaderboardRows] = useState([]);
@@ -71,6 +96,17 @@ function App() {
     () => history.reduce((sum, row) => sum + row.profit, 0),
     [history]
   );
+
+  const cumulativeCo2 = useMemo(
+    () => history.reduce((sum, row) => sum + (row.co2 || 0), 0),
+    [history]
+  );
+
+  const applyServerConfig = useCallback((config) => {
+    setGameConfig(config);
+    setConfigDraft(draftFromConfig(config));
+    setHasUnsavedConfigChanges(false);
+  }, []);
 
   const overallProfit = useMemo(
     () => turHistory.reduce((sum, tur) => sum + tur.cumulativeProfit, 0),
@@ -118,11 +154,13 @@ function App() {
             setDistributionMean(String(data.distribution?.mean ?? 100));
             setDistributionStdDev(String(data.distribution?.stdDev ?? 10));
             setHasUnsavedDistributionChanges(false);
-            setWholesaleCost(String(data.prices?.wholesaleCost ?? 10));
-            setRetailPrice(String(data.prices?.retailPrice ?? 40));
-            setSalvagePrice(String(data.prices?.salvagePrice ?? 5));
-            setHasUnsavedPriceChanges(false);
-            setTotalRounds(data.totalRounds || 5);
+            if (data.config) {
+              applyServerConfig(data.config);
+            }
+            if (data.player?.inventory) {
+              setInventory(data.player.inventory);
+            }
+            setTotalRounds(data.totalRounds || 12);
             if (data.roundHistory) {
               setAdminRoundHistory(data.roundHistory);
             }
@@ -155,7 +193,7 @@ function App() {
 
     setCurrentRound(data.currentRound);
     setRoundPhase(data.roundPhase || "pending");
-    setTotalRounds(data.totalRounds || 5);
+    setTotalRounds(data.totalRounds || 12);
 
     if (data.distribution) {
       const shouldPreserveAdminDraft =
@@ -173,17 +211,16 @@ function App() {
       }
     }
 
-    if (data.prices) {
-      const shouldPreservePriceDraft =
+    if (data.config) {
+      const shouldPreserveConfigDraft =
         isAdmin &&
-        hasUnsavedPriceChanges &&
+        hasUnsavedConfigChanges &&
         (data.roundPhase || "pending") === "pending";
 
-      if (!shouldPreservePriceDraft) {
-        setWholesaleCost(String(data.prices.wholesaleCost));
-        setRetailPrice(String(data.prices.retailPrice));
-        setSalvagePrice(String(data.prices.salvagePrice));
-        setHasUnsavedPriceChanges(false);
+      if (!shouldPreserveConfigDraft) {
+        applyServerConfig(data.config);
+      } else {
+        setGameConfig(data.config);
       }
     }
 
@@ -193,6 +230,9 @@ function App() {
       setLastRoundResult(data.player.lastRoundResult || null);
       setIsRoundSubmitted(Boolean(data.player.submittedThisRound));
       setTurHistory(data.player.turHistory || []);
+      if (data.player.inventory) {
+        setInventory(data.player.inventory);
+      }
     }
 
     if (data.roundHistory) {
@@ -213,7 +253,8 @@ function App() {
     isAdmin,
     adminToken,
     hasUnsavedDistributionChanges,
-    hasUnsavedPriceChanges
+    hasUnsavedConfigChanges,
+    applyServerConfig
   ]);
 
   const handleNicknameSubmit = async (event) => {
@@ -250,10 +291,12 @@ function App() {
       setDistributionMean(String(data.distribution?.mean ?? 100));
       setDistributionStdDev(String(data.distribution?.stdDev ?? 10));
       setHasUnsavedDistributionChanges(false);
-      setWholesaleCost(String(data.prices?.wholesaleCost ?? 10));
-      setRetailPrice(String(data.prices?.retailPrice ?? 40));
-      setSalvagePrice(String(data.prices?.salvagePrice ?? 5));
-      setHasUnsavedPriceChanges(false);
+      if (data.config) {
+        applyServerConfig(data.config);
+      }
+      if (data.inventory) {
+        setInventory(data.inventory);
+      }
       setTotalRounds(data.totalRounds);
       setTurHistory([]);
       setHistory([]);
@@ -281,18 +324,18 @@ function App() {
     }
   };
 
-  const handleOrderSubmit = async (orderQuantity) => {
+  const handleOrderSubmit = async (orderUpTo) => {
     if (!currentRound || !gameId || !playerId) {
       return;
     }
 
     try {
       setErrorMessage("");
-      const data = await submitOrder({ gameId, playerId, orderQuantity });
+      const data = await submitOrder({ gameId, playerId, orderUpTo });
 
       setRoundPhase(data.roundPhase || roundPhase);
       setIsRoundSubmitted(true);
-      setStatusMessage("Order submitted. Waiting for round end.");
+      setStatusMessage("Order-up-to level submitted. Waiting for round end.");
     } catch (error) {
       setErrorMessage(error.message);
     }
@@ -327,11 +370,8 @@ function App() {
         setDistributionStdDev(String(data.distribution?.stdDev ?? 10));
         setHasUnsavedDistributionChanges(false);
       }
-      if (data.prices) {
-        setWholesaleCost(String(data.prices.wholesaleCost));
-        setRetailPrice(String(data.prices.retailPrice));
-        setSalvagePrice(String(data.prices.salvagePrice));
-        setHasUnsavedPriceChanges(false);
+      if (data.config) {
+        applyServerConfig(data.config);
       }
       setLeaderboardRows(data.leaderboard || []);
       setStatusMessage(
@@ -418,8 +458,9 @@ function App() {
       setLeaderboardRows([]);
       setLastRoundResult(null);
       setIsRoundSubmitted(false);
+      setInventory(null);
       setHasUnsavedDistributionChanges(false);
-      setHasUnsavedPriceChanges(false);
+      setHasUnsavedConfigChanges(false);
       setShowRestartConfirm(false);
       setShowFinalLeaderboard(false);
       setStatusMessage("Game restarted — back to the beginning.");
@@ -505,45 +546,30 @@ function App() {
         distPayload = { ...distPayload, min: parsedMin, max: parsedMax };
       }
 
-      // --- Prices validation ---
-      const parsedWholesale = Number(wholesaleCost);
-      const parsedRetail = Number(retailPrice);
-      const parsedSalvage = Number(salvagePrice);
-
-      if (!Number.isFinite(parsedWholesale) || !Number.isFinite(parsedRetail) || !Number.isFinite(parsedSalvage)) {
-        setErrorMessage("All prices must be valid numbers.");
-        return;
-      }
-
-      if (parsedWholesale <= 0 || parsedRetail <= 0) {
-        setErrorMessage("Wholesale cost and retail price must be greater than 0.");
-        return;
-      }
-
-      if (parsedSalvage < 0) {
-        setErrorMessage("Salvage price cannot be negative.");
-        return;
-      }
-
-      if (parsedSalvage >= parsedWholesale) {
-        setErrorMessage("Salvage price must be less than wholesale cost.");
-        return;
-      }
-
-      if (parsedWholesale >= parsedRetail) {
-        setErrorMessage("Wholesale cost must be less than retail price.");
-        return;
+      // --- Config validation: send only fields that differ from the server's copy ---
+      const configPayload = {};
+      for (const { key } of CONFIG_FIELD_DEFS) {
+        const raw = configDraft[key];
+        if (raw === "" || raw === undefined) {
+          continue;
+        }
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          setErrorMessage(`${key} must be a non-negative number.`);
+          return;
+        }
+        if (gameConfig && parsed === gameConfig[key]) {
+          continue;
+        }
+        configPayload[key] = parsed;
       }
 
       // --- Save both ---
       const distData = await setDistribution(distPayload);
-      const pricesData = await setPrices({
-        gameId,
-        adminToken,
-        wholesaleCost: parsedWholesale,
-        retailPrice: parsedRetail,
-        salvagePrice: parsedSalvage
-      });
+      let configData = null;
+      if (Object.keys(configPayload).length > 0) {
+        configData = await setConfig({ gameId, adminToken, ...configPayload });
+      }
 
       setDistributionType(distData.distribution.type ?? "uniform");
       setDistributionMin(String(distData.distribution.min));
@@ -556,10 +582,11 @@ function App() {
         return { ...prev, distribution: distData.distribution };
       });
 
-      setWholesaleCost(String(pricesData.prices.wholesaleCost));
-      setRetailPrice(String(pricesData.prices.retailPrice));
-      setSalvagePrice(String(pricesData.prices.salvagePrice));
-      setHasUnsavedPriceChanges(false);
+      if (configData?.config) {
+        applyServerConfig(configData.config);
+      } else {
+        setHasUnsavedConfigChanges(false);
+      }
 
       const distDesc =
         distData.distribution.type === "normal"
@@ -567,7 +594,9 @@ function App() {
           : `Uniform [${distData.distribution.min}, ${distData.distribution.max}]`;
 
       setStatusMessage(
-        `Parameters updated — Distribution: ${distDesc} | Retail $${pricesData.prices.retailPrice}, Wholesale $${pricesData.prices.wholesaleCost}, Salvage $${pricesData.prices.salvagePrice}.`
+        configData
+          ? `Parameters updated — Distribution: ${distDesc} | Economy config saved.`
+          : `Parameters updated — Distribution: ${distDesc}.`
       );
     } catch (error) {
       setErrorMessage(error.message);
@@ -715,8 +744,8 @@ function App() {
       <main className="page auth-page">
         <section className="card auth-card">
           <div className="auth-header">
-            <h1 className="auth-title">EverChic Fashions</h1>
-            <p className="auth-subtitle">Hawaiian Shirt Newsvendor Game</p>
+            <h1 className="auth-title">Island Market</h1>
+            <p className="auth-subtitle">Order-Up-To Inventory Game</p>
             <p className="muted">
               Enter a nickname to join an active game. Use admin mode to create one.
             </p>
@@ -781,6 +810,7 @@ function App() {
           <p className="total-profit">Overall Profit: ${overallProfit.toLocaleString("en-US")}</p>
         </header>
 
+        <ParetoScatter rows={leaderboardRows} selfNickname={nickname} />
         <Leaderboard rows={leaderboardRows} title="Final Leaderboard" />
 
         <button type="button" className="back-to-game" onClick={() => setShowFinalLeaderboard(false)}>
@@ -813,12 +843,12 @@ function App() {
     <main className={`page ${showLeaderboard ? "page-wide" : ""}`}>
       {emojiRaining ? <EmojiRain key={emojiBurstKey} /> : null}
       <header className="hero">
-        <p className="eyebrow">EverChic Fashions</p>
+        <p className="eyebrow">Island Market</p>
         <h1>Welcome, {nickname}</h1>
         <p className="muted">
           {isGameFinished
             ? "Game complete. Review your final round below or head to the leaderboard."
-            : "Decide order quantities and submit."}
+            : "Set your order-up-to level S each round — keep shelves stocked without burning carbon."}
         </p>
       </header>
 
@@ -896,40 +926,26 @@ function App() {
             )}
 
           </div>
-          <div className="price-controls">
-            <label htmlFor="price-wholesale">Wholesale Cost</label>
-            <input
-              id="price-wholesale"
-              type="number"
-              value={wholesaleCost}
-              onChange={(event) => {
-                setWholesaleCost(event.target.value);
-                setHasUnsavedPriceChanges(true);
-              }}
-              disabled={roundPhase === "active"}
-            />
-            <label htmlFor="price-retail">Retail Price</label>
-            <input
-              id="price-retail"
-              type="number"
-              value={retailPrice}
-              onChange={(event) => {
-                setRetailPrice(event.target.value);
-                setHasUnsavedPriceChanges(true);
-              }}
-              disabled={roundPhase === "active"}
-            />
-            <label htmlFor="price-salvage">Salvage Price</label>
-            <input
-              id="price-salvage"
-              type="number"
-              value={salvagePrice}
-              onChange={(event) => {
-                setSalvagePrice(event.target.value);
-                setHasUnsavedPriceChanges(true);
-              }}
-              disabled={roundPhase === "active"}
-            />
+          <div className="config-form">
+            {CONFIG_FIELD_DEFS.map(({ key, label, preGameOnly }) => (
+              <label key={key} htmlFor={`config-${key}`}>
+                {label}
+                {preGameOnly && adminRoundHistory.length > 0 ? " (locked)" : ""}
+                <input
+                  id={`config-${key}`}
+                  type="number"
+                  min="0"
+                  value={configDraft[key] ?? ""}
+                  onChange={(event) => {
+                    setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }));
+                    setHasUnsavedConfigChanges(true);
+                  }}
+                  disabled={
+                    roundPhase === "active" || (preGameOnly && adminRoundHistory.length > 0)
+                  }
+                />
+              </label>
+            ))}
           </div>
           <button
             type="button"
@@ -1022,18 +1038,14 @@ function App() {
       {currentRound ? (
         <>
           <ProgressBar currentRound={currentRound.id} totalRounds={totalRounds} />
-          <RoundInfo
-            round={currentRound}
-            totalRounds={totalRounds}
-            prices={{
-              wholesaleCost: Number(wholesaleCost),
-              retailPrice: Number(retailPrice),
-              salvagePrice: Number(salvagePrice)
-            }}
-          />
+          <RoundInfo round={currentRound} totalRounds={totalRounds} config={gameConfig} />
+          {inventory ? <PipelineViz pipeline={inventory.pipeline} /> : null}
           <OrderForm
             onSubmit={handleOrderSubmit}
             disabled={isRoundSubmitted || roundPhase !== "active"}
+            onHand={inventory?.onHand ?? 0}
+            inTransit={inventory?.inTransit ?? 0}
+            config={gameConfig}
           />
         </>
       ) : null}
@@ -1063,6 +1075,7 @@ function App() {
             <strong>
               ${(isGameFinished ? overallProfit : cumulativeProfit).toLocaleString("en-US")}
             </strong>
+            <p className="co2-line">Cumulative CO₂: {Math.round(cumulativeCo2)} kg</p>
           </section>
         </div>
 
@@ -1071,7 +1084,12 @@ function App() {
             {showLeaderboard ? "Hide Leaderboard" : "Show Leaderboard"}
           </button>
 
-          {showLeaderboard ? <Leaderboard rows={leaderboardRows} title="Leaderboard" /> : null}
+          {showLeaderboard ? (
+            <>
+              <ParetoScatter rows={leaderboardRows} selfNickname={nickname} />
+              <Leaderboard rows={leaderboardRows} title="Leaderboard" />
+            </>
+          ) : null}
         </aside>
       </div>
     </main>

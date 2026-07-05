@@ -24,7 +24,9 @@ export const DEFAULT_CONFIG = {
   fixedCostPerTruck: 50,
   co2PerTruck: 100,
   co2PerUnitHeld: 0.5,
-  startingOnHand: 360
+  // ~ one protection interval (L+1 rounds) of mean demand: round 1 is not a
+  // scripted stockout, but replenishment kicks in within the first rounds.
+  startingOnHand: 300
 };
 
 export function createInitialState(config = DEFAULT_CONFIG) {
