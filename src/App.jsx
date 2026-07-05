@@ -6,7 +6,7 @@ import Leaderboard from "./components/Leaderboard";
 import ParetoScatter from "./components/ParetoScatter";
 import PipelineViz from "./components/PipelineViz";
 import ProgressBar from "./components/ProgressBar";
-import EmojiRain from "./components/EmojiRain";
+import TruckSweep from "./components/TruckSweep";
 import {
   endGame,
   endRound,
@@ -735,7 +735,9 @@ function App() {
       return undefined;
     }
 
-    const timeoutId = setTimeout(() => setEmojiRaining(false), 4000);
+    // Long enough for the full truck convoy (staggered, ~4.5s) to clear the
+    // screen; the emoji rain has already faded by ~3.6s.
+    const timeoutId = setTimeout(() => setEmojiRaining(false), 5200);
     return () => clearTimeout(timeoutId);
   }, [emojiBurstKey, emojiRaining]);
 
@@ -841,7 +843,7 @@ function App() {
 
   return (
     <main className={`page ${showLeaderboard ? "page-wide" : ""}`}>
-      {emojiRaining ? <EmojiRain key={emojiBurstKey} /> : null}
+      {emojiRaining ? <TruckSweep key={`truck-${emojiBurstKey}`} /> : null}
       <header className="hero">
         <p className="eyebrow">Island Market</p>
         <h1>Welcome, {nickname}</h1>

@@ -673,3 +673,76 @@ button.danger:hover {
     flex-direction: column;
   }
 }
+
+/* ---- Truck sweep (round-end convoy) ---- */
+
+.truck-sweep {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 55; /* just under the emoji rain (60) */
+}
+
+.truck-unit {
+  position: absolute;
+  left: 0;
+  transform-origin: center;
+  will-change: transform;
+  animation-name: truck-drive;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+/* Drive + per-truck scale live in one transform so they don't overwrite each
+   other, and it stays on the GPU (no per-frame layout). --scale is set inline. */
+@keyframes truck-drive {
+  from {
+    transform: translateX(-180px) scale(var(--scale));
+  }
+  to {
+    transform: translateX(calc(100vw + 180px)) scale(var(--scale));
+  }
+}
+
+.truck-art {
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.18));
+}
+
+/* Exhaust puff: born at the truck's back-left, drifts up and back while fading,
+   so relative to the moving cab it reads as a trailing plume. Loops during the
+   drive via staggered delays. */
+.truck-smoke {
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(120, 120, 120, 0.55), rgba(120, 120, 120, 0));
+  will-change: transform, opacity;
+  animation-name: truck-smoke-puff;
+  animation-duration: 1.1s;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes truck-smoke-puff {
+  0% {
+    transform: translate(0, 0) scale(0.4);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translate(-64px, -30px) scale(1.7);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .truck-sweep {
+    display: none;
+  }
+}
