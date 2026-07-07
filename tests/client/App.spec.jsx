@@ -201,7 +201,7 @@ describe("App", () => {
     expect(await screen.findByText("$3,190")).toBeInTheDocument();
   });
 
-  it("rains emojis when the hand changes", async () => {
+  it("sweeps the truck convoy when the round changes", async () => {
     api.startGame.mockResolvedValue({
       gameId: "g1",
       playerId: "p1",
@@ -227,7 +227,7 @@ describe("App", () => {
     await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0));
     const ws = MockWebSocket.instances[0];
 
-    // A round_started event that advances the hand id triggers the emoji burst.
+    // A round_started event that advances the round id triggers the truck sweep.
     await act(async () => {
       ws._emit("message", {
         data: JSON.stringify({
@@ -241,6 +241,6 @@ describe("App", () => {
       });
     });
 
-    await waitFor(() => expect(document.querySelector(".emoji-rain")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector(".truck-sweep")).not.toBeNull());
   });
 });

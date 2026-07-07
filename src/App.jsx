@@ -324,18 +324,18 @@ function App() {
     }
   };
 
-  const handleOrderSubmit = async (orderUpTo) => {
+  const handleOrderSubmit = async (orderQty) => {
     if (!currentRound || !gameId || !playerId) {
       return;
     }
 
     try {
       setErrorMessage("");
-      const data = await submitOrder({ gameId, playerId, orderUpTo });
+      const data = await submitOrder({ gameId, playerId, orderQty });
 
       setRoundPhase(data.roundPhase || roundPhase);
       setIsRoundSubmitted(true);
-      setStatusMessage("Order-up-to level submitted. Waiting for round end.");
+      setStatusMessage("Order submitted. Waiting for round end.");
     } catch (error) {
       setErrorMessage(error.message);
     }
@@ -842,15 +842,19 @@ function App() {
   }
 
   return (
-    <main className={`page ${showLeaderboard ? "page-wide" : ""}`}>
+    <>
+      {/* Rendered OUTSIDE <main> on purpose: <main> gets the rumble transform,
+          and a transformed ancestor would trap this position:fixed overlay
+          inside the centered page column instead of the full viewport. */}
       {emojiRaining ? <TruckSweep key={`truck-${emojiBurstKey}`} /> : null}
+      <main className={`page ${showLeaderboard ? "page-wide" : ""} ${emojiRaining ? "screen-rumble" : ""}`}>
       <header className="hero">
         <p className="eyebrow">Island Market</p>
         <h1>Welcome, {nickname}</h1>
         <p className="muted">
           {isGameFinished
             ? "Game complete. Review your final round below or head to the leaderboard."
-            : "Set your order-up-to level S each round — keep shelves stocked without burning carbon."}
+            : "Decide how many units to order each round — keep shelves stocked without burning carbon."}
         </p>
       </header>
 
@@ -1094,7 +1098,8 @@ function App() {
           ) : null}
         </aside>
       </div>
-    </main>
+      </main>
+    </>
   );
 }
 

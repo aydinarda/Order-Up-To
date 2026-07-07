@@ -1,77 +1,143 @@
 import { useMemo } from "react";
 
-// A decorative convoy of delivery trucks that sweeps the screen at each round
-// transition, each leaving a fading exhaust trail — echoing "every shipment is a
-// truck is an emission". Purely cosmetic (fixed count, not tied to actual trucks
-// dispatched). Pure-CSS/SVG, no network, remounted via `key` on each round.
+// Cinematic round-end convoy: multiple parallax depth layers of delivery trucks
+// sweep the screen, a huge hero truck dominates the foreground, all trailing
+// heavy billowing smoke, over a building exhaust haze. Purely decorative and
+// pure-CSS/SVG (no network, no library), remounted via `key` each round.
 
-// Themed flat box-truck, cab facing right (direction of travel). Colors are
-// driven by the app's CSS variables so it recolors with the theme. The exhaust
-// pipe sits at the back-left; smoke is emitted there by the parent.
-function TruckArt() {
+// Detailed flat box-truck, cab facing right (direction of travel). Colors come
+// from the app's CSS variables so it recolors with the theme. Smoke is emitted
+// by the parent at the truck's rear (left).
+function TruckArt({ label = false }) {
   return (
-    <svg viewBox="0 0 120 66" width="120" height="66" aria-hidden="true">
-      {/* exhaust pipe (back-left, top) */}
-      <rect x="4" y="8" width="4" height="8" rx="1.5" fill="#4a4a4a" opacity="0.7" />
+    <svg viewBox="0 0 220 120" width="220" height="120" aria-hidden="true">
+      {/* exhaust stack behind the cab */}
+      <rect x="150" y="6" width="7" height="30" rx="2" fill="#3f3f3f" />
       {/* trailer box */}
-      <rect x="4" y="14" width="72" height="34" rx="4" fill="var(--surface)" stroke="var(--line)" strokeWidth="2" />
+      <rect x="8" y="24" width="140" height="64" rx="6" fill="var(--surface)" stroke="var(--line)" strokeWidth="3" />
+      {/* panel seams */}
+      <g stroke="var(--line)" strokeWidth="2" opacity="0.8">
+        <line x1="45" y1="24" x2="45" y2="88" />
+        <line x1="82" y1="24" x2="82" y2="88" />
+        <line x1="119" y1="24" x2="119" y2="88" />
+      </g>
       {/* accent stripe */}
-      <rect x="6" y="26" width="68" height="8" fill="var(--accent)" opacity="0.9" />
+      <rect x="12" y="46" width="132" height="16" fill="var(--accent)" />
+      {label && (
+        <text x="78" y="59" textAnchor="middle" fontSize="12" fontWeight="700" fill="#fff" letterSpacing="0.5">
+          ISLAND MARKET
+        </text>
+      )}
       {/* cab */}
-      <path d="M76 20 h18 l14 14 v14 h-32 z" fill="var(--accent)" />
-      <path d="M76 20 h18 l14 14 v14 h-32 z" fill="none" stroke="var(--accent-dark)" strokeWidth="1.5" />
+      <path d="M148 34 h30 l24 26 v28 h-54 z" fill="var(--accent)" />
+      <path d="M148 34 h30 l24 26 v28 h-54 z" fill="none" stroke="var(--accent-dark)" strokeWidth="2" />
       {/* windshield */}
-      <path d="M92 24 h5 l8.5 8.5 h-13.5 z" fill="#cdeafd" />
+      <path d="M180 40 h13 l15 15 h-28 z" fill="#cdeafd" />
+      {/* headlight + bumper */}
+      <circle cx="200" cy="80" r="4" fill="#ffe6a1" />
+      <rect x="196" y="86" width="14" height="6" rx="2" fill="var(--accent-dark)" />
       {/* wheels */}
-      <circle cx="26" cy="50" r="8" fill="#2b2b2b" />
-      <circle cx="26" cy="50" r="3.4" fill="#8a8a8a" />
-      <circle cx="90" cy="50" r="8" fill="#2b2b2b" />
-      <circle cx="90" cy="50" r="3.4" fill="#8a8a8a" />
+      <g>
+        <circle cx="48" cy="92" r="15" fill="#222" />
+        <circle cx="48" cy="92" r="6" fill="#8a8a8a" />
+        <circle cx="176" cy="92" r="15" fill="#222" />
+        <circle cx="176" cy="92" r="6" fill="#8a8a8a" />
+      </g>
     </svg>
   );
 }
 
-function TruckSweep({ count = 8 }) {
-  // Randomized once per mount; remounted via `key` on each round transition.
-  const trucks = useMemo(
-    () =>
-      Array.from({ length: count }, (_, i) => {
-        const scale = 0.55 + Math.random() * 0.5;
-        return {
-          id: i,
-          top: 52 + Math.random() * 30, // vh — lower band, like a road
+// Depth layers, back to front. The hero is appended separately.
+const LAYERS = [
+  { key: "far", count: 5, scaleMin: 0.3, scaleRange: 0.16, opacity: 0.4, topMin: 6, topRange: 40, durMin: 3.4, durRange: 0.8, delaySpread: 1.4, smoke: 2, big: false },
+  { key: "near", count: 3, scaleMin: 0.75, scaleRange: 0.4, opacity: 1, topMin: 44, topRange: 28, durMin: 2.7, durRange: 0.6, delaySpread: 0.9, smoke: 5, big: true }
+];
+
+function makeSmoke(count, big) {
+  return Array.from({ length: count }, (_, i) => {
+    const size = big ? 60 + Math.random() * 80 : 22 + Math.random() * 22;
+    return {
+      id: i,
+      size,
+      puffX: size * 1.15,
+      puffY: size * 0.7,
+      delay: i * 0.22 + Math.random() * 0.12,
+      duration: (big ? 1.5 : 1.1) + Math.random() * 0.5
+    };
+  });
+}
+
+function TruckSweep() {
+  const trucks = useMemo(() => {
+    const list = [];
+    let id = 0;
+
+    for (const layer of LAYERS) {
+      for (let i = 0; i < layer.count; i += 1) {
+        const scale = layer.scaleMin + Math.random() * layer.scaleRange;
+        list.push({
+          id: id++,
+          layer: layer.key,
+          top: layer.topMin + Math.random() * layer.topRange,
           scale,
-          delay: i * 0.16 + Math.random() * 0.08, // s — convoy stagger
-          duration: 2.6 + Math.random() * 0.7, // s — bigger = a touch faster feel
-          z: Math.round(scale * 100) // nearer trucks (bigger) draw on top
-        };
-      }),
-    [count]
-  );
+          opacity: layer.opacity,
+          delay: (i / layer.count) * layer.delaySpread + Math.random() * 0.12,
+          duration: layer.durMin + Math.random() * layer.durRange,
+          zIndex: Math.round(scale * 100),
+          label: false,
+          smoke: makeSmoke(layer.smoke, layer.big)
+        });
+      }
+    }
+
+    // Hero: huge, foreground, deterministic timing so the screen shake can sync.
+    list.push({
+      id: id++,
+      layer: "hero",
+      top: 40,
+      scale: 1.8,
+      opacity: 1,
+      delay: 0.8,
+      duration: 3,
+      zIndex: 200,
+      label: true,
+      smoke: makeSmoke(7, true)
+    });
+
+    return list;
+  }, []);
 
   return (
     <div className="truck-sweep" aria-hidden="true">
+      <div className="exhaust-haze" />
       {trucks.map((t) => (
         <div
           key={t.id}
-          className="truck-unit"
+          className={`truck-unit truck-${t.layer}`}
           style={{
             top: `${t.top}vh`,
-            zIndex: t.z,
+            zIndex: t.zIndex,
+            opacity: t.opacity,
             "--scale": t.scale,
             animationDelay: `${t.delay}s`,
             animationDuration: `${t.duration}s`
           }}
         >
           <div className="truck-art">
-            <TruckArt />
+            <TruckArt label={t.label} />
           </div>
-          {/* exhaust puffs emitted at the back-left of the truck */}
-          {[0, 1, 2].map((p) => (
+          {t.smoke.map((s) => (
             <span
-              key={p}
+              key={s.id}
               className="truck-smoke"
-              style={{ animationDelay: `${t.delay + p * 0.28}s` }}
+              style={{
+                width: `${s.size}px`,
+                height: `${s.size}px`,
+                "--puff-x": `${s.puffX}px`,
+                "--puff-y": `${s.puffY}px`,
+                animationDelay: `${t.delay + s.delay}s`,
+                animationDuration: `${s.duration}s`
+              }}
             />
           ))}
         </div>

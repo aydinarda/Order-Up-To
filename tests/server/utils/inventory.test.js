@@ -18,20 +18,19 @@ test("an order placed in round t arrives exactly at the start of round t+L", () 
   // L = 2. Zero demand throughout so arrivals are the only inventory movement.
   let state = createInitialState({ ...config, startingOnHand: 0 });
 
-  // Round 1: S = 100 -> orders 100 (IP is 0). Not yet on hand.
+  // Round 1: order 100. Not yet on hand.
   let step = advancePeriod(state, config, 0, 100);
   assert.equal(step.result.orderQty, 100);
   assert.equal(step.nextState.onHand, 0);
   assert.deepEqual(step.nextState.pipeline, [0, 100]);
 
-  // Round 2 (t+1): still nothing arrives. IP = 100 -> no new order.
-  step = advancePeriod(step.nextState, config, 0, 100);
+  // Round 2 (t+1): still nothing arrives; order 0.
+  step = advancePeriod(step.nextState, config, 0, 0);
   assert.equal(step.result.arrival, 0);
-  assert.equal(step.result.orderQty, 0);
   assert.equal(step.nextState.onHand, 0);
 
   // Round 3 (t+2 = t+L): the 100 units arrive.
-  step = advancePeriod(step.nextState, config, 0, 100);
+  step = advancePeriod(step.nextState, config, 0, 0);
   assert.equal(step.result.arrival, 100);
   assert.equal(step.nextState.onHand, 100);
 });
@@ -55,22 +54,30 @@ test("arrival is available to serve the same period's demand", () => {
   assert.equal(result.onHandEnd, 5);
 });
 
-test("order quantity tops inventory position up to S (post-demand IP)", () => {
+test("the order quantity is placed directly (not derived from inventory position)", () => {
   const state = { onHand: 100, pipeline: [20, 30] };
-  // demand 60 -> onHandEnd = 100 + 20 - 60 = 60; in transit = 30; IP = 90.
-  const { result } = advancePeriod(state, config, 60, 250);
+  // demand 60 -> onHandEnd = 100 + 20 - 60 = 60; in transit = 30; IP = 90 (informational).
+  const { result, nextState } = advancePeriod(state, config, 60, 160);
   assert.equal(result.inventoryPosition, 90);
-  assert.equal(result.orderQty, 160);
+  assert.equal(result.orderQty, 160); // exactly what was asked, IP is not subtracted
+  assert.deepEqual(nextState.pipeline, [30, 160]);
 });
 
-test("no order when S is at or below inventory position", () => {
+test("ordering zero places nothing and emits no transport cost or CO2", () => {
   const state = { onHand: 200, pipeline: [0, 100] };
-  const { result } = advancePeriod(state, config, 0, 250);
+  const { result } = advancePeriod(state, config, 0, 0);
   assert.equal(result.orderQty, 0);
   assert.equal(result.trucks, 0);
   assert.equal(result.transportCo2, 0);
   assert.equal(result.truckCost, 0);
   assert.equal(result.truckFillPct, null);
+});
+
+test("negative orders are clamped to zero", () => {
+  const state = { onHand: 0, pipeline: [0, 0] };
+  const { result } = advancePeriod(state, config, 0, -50);
+  assert.equal(result.orderQty, 0);
+  assert.equal(result.trucks, 0);
 });
 
 test("truck count is ceil(q / capacity): edges q=1, q=cap, q=cap+1", () => {
@@ -107,9 +114,9 @@ test("holding cost and storage CO2 are charged on ending on-hand", () => {
 test("profit = revenue - purchase - holding - trucks; purchase charged at order time", () => {
   const state = { onHand: 100, pipeline: [0, 0] };
   const demand = 80;
-  const S = 200;
-  const { result } = advancePeriod(state, config, demand, S);
-  // sold 80, onHandEnd 20, IP 20, q 180, trucks 2
+  const q = 180;
+  const { result } = advancePeriod(state, config, demand, q);
+  // sold 80, onHandEnd 20, q 180, trucks 2
   const expected =
     80 * config.price -
     180 * config.unitCost -
@@ -140,6 +147,6 @@ test("lead time 0: order lands in on-hand for next period, pipeline stays empty"
 
 test("state object is not mutated", () => {
   const state = { onHand: 100, pipeline: [10, 20] };
-  advancePeriod(state, config, 50, 300);
+  advancePeriod(state, config, 50, 120);
   assert.deepEqual(state, { onHand: 100, pipeline: [10, 20] });
 });

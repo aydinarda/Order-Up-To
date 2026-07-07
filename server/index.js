@@ -19,9 +19,9 @@ import {
 const PORT = Number(process.env.PORT || 4000);
 const DEFAULT_ADMIN_KEY = process.env.ADMIN_KEY || "admin123";
 
-// When a player does not submit, they keep their previous round's order-up-to level.
-// If they have no previous round yet (first round / joined late), fall back to the
-// configured starting on-hand ("hold steady").
+// When a player does not submit, they repeat their previous round's order
+// quantity. If they have no previous round yet (first round / joined late), the
+// fallback is 0 ("order nothing this round").
 
 // Leaderboard = Pareto representation over (cumulative profit, cumulative CO2):
 // rows are annotated with a non-dominated front number and sorted (front asc,
@@ -237,7 +237,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       turHistory: [],
       // Late joiners start with a fresh warehouse mid-game — acceptable for a classroom.
       inventory: createInitialState(activeGame.config),
-      lastS: null
+      lastQ: null
     };
 
     activeGame.players.set(player.id, player);
@@ -475,7 +475,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
   });
 
   app.post("/submit-order", (req, res) => {
-    const { gameId, playerId, orderUpTo } = req.body || {};
+    const { gameId, playerId, orderQty } = req.body || {};
 
     if (!activeGame || gameId !== activeGame.id) {
       return res.status(400).json({ error: "invalid or inactive game id" });
@@ -502,10 +502,10 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       return res.status(400).json({ error: "round is not active" });
     }
 
-    // S = 0 is a legal decision: "order nothing, run the shelves down".
-    const parsedS = Number(orderUpTo);
-    if (!Number.isInteger(parsedS) || parsedS < 0) {
-      return res.status(400).json({ error: "orderUpTo must be a non-negative integer" });
+    // q = 0 is a legal decision: "order nothing this round, run the shelves down".
+    const parsedQty = Number(orderQty);
+    if (!Number.isInteger(parsedQty) || parsedQty < 0) {
+      return res.status(400).json({ error: "orderQty must be a non-negative integer" });
     }
 
     const round = getRoundForGame(activeGame);
@@ -522,7 +522,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundOrders.set(player.id, {
       playerId: player.id,
       nickname: player.nickname,
-      orderUpTo: parsedS,
+      orderQty: parsedQty,
       submittedAt: new Date().toISOString()
     });
 
@@ -535,7 +535,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     return res.json({
       accepted: true,
       roundId: round.id,
-      orderUpTo: parsedS,
+      orderQty: parsedQty,
       cumulativeProfit: player.cumulativeProfit,
       roundsPlayed: player.history.length,
       totalRounds: activeGame.handsPerTur,
@@ -570,19 +570,17 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     const dbRoundResults = [];
 
     // Record a result for every player so non-submitters also see the round outcome.
-    // A missing submission carries the player's previous order-up-to level forward
-    // ("keep the policy running"); with no prior level yet, hold at startingOnHand.
+    // A missing submission repeats the player's previous order quantity ("keep
+    // ordering the same"); with no prior order yet, the fallback is 0.
     for (const player of activeGame.players.values()) {
       const order = activeGame.activeRoundOrders.get(player.id);
-      const orderUpTo = order
-        ? order.orderUpTo
-        : player.lastS ?? activeGame.config.startingOnHand;
+      const orderQty = order ? order.orderQty : player.lastQ ?? 0;
 
       const { nextState, result } = advancePeriod(
         player.inventory,
         activeGame.config,
         realizedDemand,
-        orderUpTo
+        orderQty
       );
 
       const roundResult = {
@@ -595,14 +593,13 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       };
 
       player.inventory = nextState;
-      player.lastS = orderUpTo;
+      player.lastQ = orderQty;
       player.history.push(roundResult);
       player.cumulativeProfit += roundResult.profit;
 
       dbRoundResults.push({
         playerId: player.id,
         nickname: player.nickname,
-        orderUpTo,
         orderQty: result.orderQty,
         submittedAt: order ? order.submittedAt : null,
         arrival: result.arrival,
@@ -798,7 +795,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         history: [],
         turHistory: [],
         inventory: createInitialState(activeGame.config),
-        lastS: null
+        lastQ: null
       });
     }
 
@@ -927,7 +924,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
               inTransit: player.inventory.pipeline.reduce((s, q) => s + q, 0),
               pipeline: player.inventory.pipeline
             },
-            lastS: player.lastS,
+            lastQ: player.lastQ,
             submittedThisRound:
               activeGame.roundPhase === "active" && activeGame.activeRoundOrders.has(player.id)
           }

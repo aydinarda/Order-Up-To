@@ -43,7 +43,6 @@ create table if not exists orders (
   round_id text not null,
   player_id text not null,
   nickname text not null,
-  order_up_to int not null,
   order_qty int not null,
   arrival int,
   sold int,

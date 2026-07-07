@@ -1,4 +1,9 @@
-// Per-period state transition for the order-up-to (base-stock) game.
+// Per-period state transition for the multi-period inventory game.
+//
+// The player decides the order quantity q directly each round (a Beer-Game-style
+// decision): q units are shipped now and arrive after the lead time. Inventory
+// position (on-hand + in-transit) is surfaced for context but is NOT used to
+// derive q — reading the pipeline and not over-ordering is the player's job.
 //
 // Pipeline convention (the off-by-one guard): pipeline has length L;
 // pipeline[0] is the shipment that arrives at the START of the next processed
@@ -9,8 +14,8 @@
 // Period sequence (fixed, documented once):
 //   1. receive pipeline[0] into on-hand
 //   2. realize demand: sold = min(onHand, d), lost = d - sold (lost sales, no backorders)
-//   3. post-demand IP = onHand + in-transit; q = max(0, S - IP); trucks = ceil(q / capacity)
-//   4. charge financials and emissions; push q into the pipeline
+//   3. place the order q (given); trucks = ceil(q / capacity); push q into the pipeline
+//   4. charge financials and emissions
 //
 // Purchase cost is charged at order time (q * unitCost), so end-of-game
 // leftovers are sunk — no salvage step.
@@ -36,7 +41,7 @@ export function createInitialState(config = DEFAULT_CONFIG) {
   };
 }
 
-export function advancePeriod(state, config, demand, orderUpTo) {
+export function advancePeriod(state, config, demand, order) {
   const arrival = state.pipeline.length > 0 ? state.pipeline[0] : 0;
   const remainingPipeline = state.pipeline.slice(1);
 
@@ -46,8 +51,8 @@ export function advancePeriod(state, config, demand, orderUpTo) {
   const onHandEnd = available - sold;
 
   const inTransit = remainingPipeline.reduce((sum, qty) => sum + qty, 0);
-  const inventoryPosition = onHandEnd + inTransit;
-  const orderQty = Math.max(0, orderUpTo - inventoryPosition);
+  const inventoryPosition = onHandEnd + inTransit; // informational (shown to the player)
+  const orderQty = Math.max(0, order); // placed directly by the player
   const trucks = orderQty > 0 ? Math.ceil(orderQty / config.truckCapacity) : 0;
 
   const revenue = sold * config.price;
@@ -77,7 +82,6 @@ export function advancePeriod(state, config, demand, orderUpTo) {
       onHandEnd,
       inTransitEnd: inTransit + (config.leadTime > 0 ? orderQty : 0),
       inventoryPosition,
-      orderUpTo,
       orderQty,
       trucks,
       truckFillPct: trucks > 0 ? (orderQty / (trucks * config.truckCapacity)) * 100 : null,

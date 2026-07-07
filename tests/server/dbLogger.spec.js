@@ -95,7 +95,6 @@ describe("dbLogger", () => {
         {
           playerId: "p1",
           nickname: "Alice",
-          orderUpTo: 300,
           orderQty: 120,
           arrival: 0,
           sold: 100,

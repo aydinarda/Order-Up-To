@@ -1,28 +1,25 @@
 import { useState } from "react";
 
-// The preview deliberately shows only the consequences of S (order size, trucks,
-// fill rate) — never a suggested S*, so students aren't anchored to the answer.
+// The player decides the order quantity q directly. On-hand and in-transit are
+// shown so they can reason about the pipeline (and avoid over-ordering what is
+// already on the way) — but the game does not do that subtraction for them.
 function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config }) {
-  const [level, setLevel] = useState("");
+  const [quantity, setQuantity] = useState("");
   const [error, setError] = useState("");
 
   const inventoryPosition = onHand + inTransit;
-  const parsed = Number(level);
-  const isValid = level !== "" && Number.isInteger(parsed) && parsed >= 0;
-  const previewQty = isValid ? Math.max(0, parsed - inventoryPosition) : null;
+  const parsed = Number(quantity);
+  const isValid = quantity !== "" && Number.isInteger(parsed) && parsed >= 0;
   const truckCapacity = config?.truckCapacity || 0;
-  const previewTrucks =
-    previewQty !== null && previewQty > 0 && truckCapacity > 0
-      ? Math.ceil(previewQty / truckCapacity)
-      : 0;
-  const previewFill =
-    previewTrucks > 0 ? Math.round((previewQty / (previewTrucks * truckCapacity)) * 100) : null;
+  const trucks =
+    isValid && parsed > 0 && truckCapacity > 0 ? Math.ceil(parsed / truckCapacity) : 0;
+  const fill = trucks > 0 ? Math.round((parsed / (trucks * truckCapacity)) * 100) : null;
 
   const handleSubmit = (event) => {
     event.preventDefault();
 
     if (!isValid) {
-      setError("Please enter a non-negative integer level.");
+      setError("Please enter a non-negative integer quantity.");
       return;
     }
 
@@ -50,31 +47,32 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config }) {
       </div>
 
       <form onSubmit={handleSubmit} className="order-form">
-        <label htmlFor="order-up-to">Order-up-to level S</label>
+        <label htmlFor="order-qty">Order quantity (units)</label>
         <input
-          id="order-up-to"
+          id="order-qty"
           type="number"
           min="0"
           step="1"
-          value={level}
-          placeholder={String(inventoryPosition)}
-          onChange={(event) => setLevel(event.target.value)}
+          value={quantity}
+          placeholder="0"
+          onChange={(event) => setQuantity(event.target.value)}
           disabled={disabled}
         />
 
         {isValid && (
           <p className="order-preview">
-            {previewQty > 0
-              ? `You'd order ${previewQty} units = ${previewTrucks} truck${previewTrucks === 1 ? "" : "s"}` +
-                (previewFill !== null ? ` (${previewFill}% full)` : "")
-              : "No order this round — S is at or below your inventory position."}
+            {parsed > 0
+              ? `${trucks} truck${trucks === 1 ? "" : "s"}` +
+                (fill !== null ? ` (${fill}% full)` : "") +
+                ` — arrives in ${config?.leadTime ?? 0} round${(config?.leadTime ?? 0) === 1 ? "" : "s"}`
+              : "No order this round — shelves run down from stock on hand."}
           </p>
         )}
 
         {error && <p className="error-text">{error}</p>}
 
         <button type="submit" disabled={disabled}>
-          Submit Level
+          Submit Order
         </button>
       </form>
     </section>

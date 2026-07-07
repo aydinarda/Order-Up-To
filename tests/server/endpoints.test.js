@@ -145,13 +145,13 @@ test("submit-order is rate limited after 10 attempts per window", async () => {
   // No active round: each request is rejected on phase, but still counts toward the limiter.
   let last;
   for (let i = 0; i < 10; i++) {
-    last = await request(app).post("/submit-order").send({ gameId, playerId, orderUpTo: 100 });
+    last = await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 100 });
   }
   assert.notEqual(last.status, 429);
 
   const eleventh = await request(app)
     .post("/submit-order")
-    .send({ gameId, playerId, orderUpTo: 100 });
+    .send({ gameId, playerId, orderQty: 100 });
 
   assert.equal(eleventh.status, 429);
   assert.match(eleventh.body.error, /too many requests/i);
@@ -168,7 +168,7 @@ test("game-state exposes submittedThisRound and finished transitions", async () 
   assert.equal(gs.body.player.submittedThisRound, false);
   assert.equal(gs.body.finished, false);
 
-  await request(app).post("/submit-order").send({ gameId, playerId, orderUpTo: 100 });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 100 });
 
   gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.submittedThisRound, true);
