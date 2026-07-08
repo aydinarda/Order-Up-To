@@ -8,7 +8,7 @@ describe("RoundResult", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("shows the order-up-to breakdown, lost sales, CO2 and profit", () => {
+  it("shows the order/sales breakdown, lost sales, CO2 and profit", () => {
     const result = {
       arrival: 40,
       realizedDemand: 95,

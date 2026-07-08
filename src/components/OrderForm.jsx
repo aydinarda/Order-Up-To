@@ -3,7 +3,9 @@ import { useState } from "react";
 // The player decides the order quantity q directly. On-hand and in-transit are
 // shown so they can reason about the pipeline (and avoid over-ordering what is
 // already on the way) — but the game does not do that subtraction for them.
-function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config }) {
+// On the priming round (round 1) the opening order arrives in 1 round instead
+// of the configured lead time, and there is no demand.
+function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, priming = false }) {
   const [quantity, setQuantity] = useState("");
   const [error, setError] = useState("");
 
@@ -14,6 +16,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config }) {
   const trucks =
     isValid && parsed > 0 && truckCapacity > 0 ? Math.ceil(parsed / truckCapacity) : 0;
   const fill = trucks > 0 ? Math.round((parsed / (trucks * truckCapacity)) * 100) : null;
+  const arrivalRounds = priming ? 1 : config?.leadTime ?? 0;
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -29,7 +32,14 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config }) {
 
   return (
     <section className="card">
-      <h3>Order Decision</h3>
+      <h3>{priming ? "Opening Order" : "Order Decision"}</h3>
+
+      {priming && (
+        <p className="order-preview">
+          Priming round — no sales yet. Place your opening order to stock the
+          warehouse; it arrives next round.
+        </p>
+      )}
 
       <div className="inventory-strip">
         <div className="inventory-stat">
@@ -64,8 +74,10 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config }) {
             {parsed > 0
               ? `${trucks} truck${trucks === 1 ? "" : "s"}` +
                 (fill !== null ? ` (${fill}% full)` : "") +
-                ` — arrives in ${config?.leadTime ?? 0} round${(config?.leadTime ?? 0) === 1 ? "" : "s"}`
-              : "No order this round — shelves run down from stock on hand."}
+                ` — arrives in ${arrivalRounds} round${arrivalRounds === 1 ? "" : "s"}`
+              : priming
+                ? "No opening order — you'll start round 2 with an empty warehouse."
+                : "No order this round — shelves run down from stock on hand."}
           </p>
         )}
 

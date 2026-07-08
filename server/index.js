@@ -56,10 +56,12 @@ function calculateLeaderboard(players, config) {
   return computeParetoFronts(rows).map((row, index) => ({ rank: index + 1, ...row }));
 }
 
-// Admin-tunable economy. leadTime, startingOnHand and seed are frozen once the
-// first round has started (they would corrupt in-flight pipelines / replayability).
+// Admin-tunable economy. leadTime and seed are frozen once the first round has
+// started (they would corrupt in-flight pipelines / replayability).
 const CONFIG_FIELDS = {
-  leadTime: { integer: true, min: 0, max: 5, preGameOnly: true },
+  // Lead time must be >= 1: round 1 is a priming round whose opening order
+  // arrives with lead time 1, so a 0-period lead time would be nonsensical.
+  leadTime: { integer: true, min: 1, max: 5, preGameOnly: true },
   price: { integer: false, min: 0.01 },
   unitCost: { integer: false, min: 0 },
   holdingCost: { integer: false, min: 0 },
@@ -67,7 +69,6 @@ const CONFIG_FIELDS = {
   fixedCostPerTruck: { integer: false, min: 0 },
   co2PerTruck: { integer: false, min: 0 },
   co2PerUnitHeld: { integer: false, min: 0 },
-  startingOnHand: { integer: true, min: 0, preGameOnly: true },
   seed: { integer: true, min: 0, max: 0xffffffff, preGameOnly: true }
 };
 
@@ -407,11 +408,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
     // Pre-game structural changes reset every player's warehouse and the demand
     // stream so round 1 starts from the new shape.
-    if (
-      updates.leadTime !== undefined ||
-      updates.startingOnHand !== undefined ||
-      updates.seed !== undefined
-    ) {
+    if (updates.leadTime !== undefined || updates.seed !== undefined) {
       for (const player of activeGame.players.values()) {
         player.inventory = createInitialState(activeGame.config);
       }
@@ -446,7 +443,12 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       return res.status(400).json({ error: "round already active" });
     }
 
-    activeGame.activeRoundDemand = sampleDemand(activeGame.distribution, activeGame.rand);
+    // Round 1 is a priming round: no demand is realized (players just place an
+    // opening order that arrives next round), so we don't draw from the RNG.
+    const isPriming = activeGame.currentRoundIndex === 0;
+    activeGame.activeRoundDemand = isPriming
+      ? null
+      : sampleDemand(activeGame.distribution, activeGame.rand);
     activeGame.activeRoundOrders = new Map();
     activeGame.roundPhase = "active";
     const startedAt = new Date().toISOString();
@@ -563,7 +565,11 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     const realizedDemand = activeGame.activeRoundDemand;
     const endedAt = new Date().toISOString();
 
-    if (!endingRound || !Number.isFinite(realizedDemand)) {
+    // Round 1 is the priming round: no demand, opening order arrives with lead
+    // time 1. Every later round realizes demand and uses the configured L.
+    const isPriming = activeGame.currentRoundIndex === 0;
+
+    if (!endingRound || (!isPriming && !Number.isFinite(realizedDemand))) {
       return res.status(400).json({ error: "round demand state is invalid" });
     }
 
@@ -580,7 +586,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         player.inventory,
         activeGame.config,
         realizedDemand,
-        orderQty
+        orderQty,
+        { leadTime: isPriming ? 1 : activeGame.config.leadTime, priming: isPriming }
       );
 
       const roundResult = {

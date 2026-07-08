@@ -68,8 +68,7 @@ const config = {
   truckCapacity: 100,
   fixedCostPerTruck: 50,
   co2PerTruck: 100,
-  co2PerUnitHeld: 0.5,
-  startingOnHand: 300
+  co2PerUnitHeld: 0.5
 };
 const distribution = { type: "uniform", min: 80, max: 120 };
 const inventory = { onHand: 300, inTransit: 0, pipeline: [0, 0] };
@@ -94,7 +93,7 @@ const baseGameState = {
     turHistory: [],
     lastRoundResult: null,
     inventory,
-    lastS: null,
+    lastQ: null,
     submittedThisRound: false
   }
 };

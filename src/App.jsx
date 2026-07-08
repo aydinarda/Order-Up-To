@@ -29,8 +29,8 @@ import {
   getSessionFromUrl
 } from "./utils/sessionStorage";
 
-// Admin-tunable economy fields; the draft holds raw input strings. leadTime and
-// startingOnHand are frozen server-side once the first round has ended.
+// Admin-tunable economy fields; the draft holds raw input strings. leadTime is
+// frozen server-side once the first round has ended.
 const CONFIG_FIELD_DEFS = [
   { key: "leadTime", label: "Lead time (rounds)", preGameOnly: true },
   { key: "price", label: "Price ($/unit)" },
@@ -39,8 +39,7 @@ const CONFIG_FIELD_DEFS = [
   { key: "truckCapacity", label: "Truck capacity (units)" },
   { key: "fixedCostPerTruck", label: "Truck cost ($/truck)" },
   { key: "co2PerTruck", label: "CO₂ per truck (kg)" },
-  { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" },
-  { key: "startingOnHand", label: "Starting on-hand", preGameOnly: true }
+  { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" }
 ];
 
 function draftFromConfig(config) {
@@ -377,7 +376,9 @@ function App() {
       setStatusMessage(
         data.finished
           ? "Game complete."
-          : `Round ended. Next round is ${data.nextRound?.id}. Realized demand was ${data.realizedDemand}.`
+          : data.realizedDemand == null
+            ? `Priming round ended. Opening orders shipped. Round ${data.nextRound?.id} is next.`
+            : `Round ended. Next round is ${data.nextRound?.id}. Realized demand was ${data.realizedDemand}.`
       );
       setIsRoundSubmitted(false);
       await syncGameState();
@@ -1052,6 +1053,7 @@ function App() {
             onHand={inventory?.onHand ?? 0}
             inTransit={inventory?.inTransit ?? 0}
             config={gameConfig}
+            priming={currentRound.id === 1}
           />
         </>
       ) : null}

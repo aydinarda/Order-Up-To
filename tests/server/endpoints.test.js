@@ -94,21 +94,22 @@ test("set-config cannot be changed during an active round", async () => {
   assert.match(res.body.error, /active round/i);
 });
 
-test("leadTime, startingOnHand and seed are frozen once a round has ended", async () => {
+test("leadTime and seed are frozen once a round has ended", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken } = await createGame(app, { handsPerTur: 3 });
 
   // Pre-game: structural fields are still changeable and reset inventories.
   const preGame = await request(app)
     .post("/set-config")
-    .send({ gameId, adminToken, leadTime: 3, startingOnHand: 200, seed: 7 });
+    .send({ gameId, adminToken, leadTime: 3, seed: 7 });
   assert.equal(preGame.status, 200);
   assert.equal(preGame.body.config.leadTime, 3);
 
+  // Round 1 is the priming round; ending it counts as the game having started.
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
-  for (const frozen of [{ leadTime: 1 }, { startingOnHand: 100 }, { seed: 9 }]) {
+  for (const frozen of [{ leadTime: 1 }, { seed: 9 }]) {
     const res = await request(app)
       .post("/set-config")
       .send({ gameId, adminToken, ...frozen });
@@ -124,16 +125,14 @@ test("leadTime, startingOnHand and seed are frozen once a round has ended", asyn
   assert.equal(midGame.body.config.co2PerTruck, 200);
 });
 
-test("pre-game structural change resets player inventories to the new shape", async () => {
+test("pre-game lead-time change reshapes every player's empty pipeline", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, playerId } = await createGame(app);
 
-  await request(app)
-    .post("/set-config")
-    .send({ gameId, adminToken, leadTime: 4, startingOnHand: 111 });
+  await request(app).post("/set-config").send({ gameId, adminToken, leadTime: 4 });
 
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
-  assert.equal(gs.body.player.inventory.onHand, 111);
+  assert.equal(gs.body.player.inventory.onHand, 0); // warehouse always starts empty
   assert.equal(gs.body.player.inventory.pipeline.length, 4);
 });
 

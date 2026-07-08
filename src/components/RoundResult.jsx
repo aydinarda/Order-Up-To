@@ -15,15 +15,20 @@ function RoundResult({ result }) {
     return null;
   }
 
+  const demandValue = result.realizedDemand ?? result.demand;
+
   return (
     <section className="card result-card">
-      <h3>Round Result</h3>
+      <h3>{result.priming ? "Opening Round" : "Round Result"}</h3>
+      {result.priming && (
+        <p className="muted-text">Priming round — no sales. Your opening order is on its way.</p>
+      )}
       <div className="result-grid">
         <p>Shipment arrived</p>
         <strong>{result.arrival}</strong>
 
         <p>Realized demand</p>
-        <strong>{result.realizedDemand ?? result.demand}</strong>
+        <strong>{result.priming || demandValue == null ? "—" : demandValue}</strong>
 
         <p>Sold units</p>
         <strong>{result.sold}</strong>
