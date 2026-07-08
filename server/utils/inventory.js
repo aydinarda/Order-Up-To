@@ -10,11 +10,22 @@
 // opening order arrives fast (lead time 1, i.e. at the start of round 2).
 // Every later order uses the configured lead time L.
 //
-// Pipeline convention (the off-by-one guard): pipeline has length L; entry i is
-// the quantity arriving in (i+1) periods. Each period we shift the front off
-// (this period's arrival) and place the new order at slot (leadTime-1) — so a
-// normal order placed in round t arrives at the start of round t + L, and the
-// opening order (lead time 1) arrives at the start of round 2.
+// Pipeline convention (the off-by-one guard): pipeline has length L + 1 — one
+// extra "reserve" slot beyond the normal horizon, held for shipping-delay
+// events (see below). Entry i is the quantity arriving in (i+1) periods. Each
+// period we shift the front off (this period's arrival) and place the new
+// order at slot (leadTime-1) — so a normal order placed in round t arrives at
+// the start of round t + L, and the opening order (lead time 1) arrives at the
+// start of round 2.
+//
+// Shipping-delay events (admin-configurable, shared across all players — see
+// config.delayProbability in server/index.js): when a round is flagged
+// `delayed`, NOTHING progresses that round. Whatever was due to arrive stays
+// in transit (arrival = 0, pipeline is not shifted), and this round's new
+// order is placed one slot deeper than usual to account for the frozen round —
+// it lands where it would have landed had the round advanced normally, then
+// waits out the freeze just like everything else already in the pipeline.
+// This is why the pipeline carries one slot of headroom beyond leadTime.
 //
 // Purchase cost is charged at order time (q * unitCost), so end-of-game
 // leftovers are sunk — no salvage step.
@@ -27,13 +38,14 @@ export const DEFAULT_CONFIG = {
   truckCapacity: 100,
   fixedCostPerTruck: 50,
   co2PerTruck: 100,
-  co2PerUnitHeld: 0.5
+  co2PerUnitHeld: 0.5,
+  delayProbability: 0
 };
 
 export function createInitialState(config = DEFAULT_CONFIG) {
   return {
     onHand: 0,
-    pipeline: Array.from({ length: config.leadTime }, () => 0)
+    pipeline: Array.from({ length: config.leadTime + 1 }, () => 0)
   };
 }
 
@@ -41,11 +53,15 @@ export function createInitialState(config = DEFAULT_CONFIG) {
 //   leadTime — periods until this order arrives (defaults to config.leadTime;
 //              the round-1 opening order passes 1)
 //   priming — round 1: no demand is realized, no sales, no lost sales
+//   delayed — a shared shipping-delay event hit this round: nothing arrives,
+//             nothing already in the pipeline advances, and this round's order
+//             is queued one slot deeper to compensate
 export function advancePeriod(state, config, demand, order, options = {}) {
   const orderLeadTime = options.leadTime ?? config.leadTime;
   const priming = options.priming ?? false;
+  const delayed = options.delayed ?? false;
 
-  const arrival = state.pipeline.length > 0 ? state.pipeline[0] : 0;
+  const arrival = delayed ? 0 : state.pipeline[0] ?? 0;
   const available = state.onHand + arrival;
 
   const sold = priming ? 0 : Math.min(available, demand);
@@ -55,16 +71,19 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   const orderQty = Math.max(0, order); // placed directly by the player
   const trucks = orderQty > 0 ? Math.ceil(orderQty / config.truckCapacity) : 0;
 
-  // Shift the pipeline forward one period, then place the new order at the slot
-  // matching its lead time. inTransit (for the informational IP) excludes the
-  // order just placed, matching what the player saw when deciding.
-  const shifted = [...state.pipeline.slice(1), 0];
-  const inTransitRemaining = shifted.reduce((sum, qty) => sum + qty, 0);
-  const slot = Math.min(Math.max(orderLeadTime - 1, 0), Math.max(shifted.length - 1, 0));
-  if (shifted.length > 0) {
-    shifted[slot] += orderQty;
-  }
+  // On a normal round, the pipeline shifts forward by one and the order lands
+  // at (leadTime - 1). On a delayed round, nothing shifts (everything already
+  // in transit — including what was due this round — just waits one more
+  // round), and the new order lands one slot deeper so it still needs exactly
+  // `orderLeadTime` normal rounds once the freeze lifts.
+  const maxSlot = state.pipeline.length - 1;
+  const shifted = delayed ? [...state.pipeline] : [...state.pipeline.slice(1), 0];
+  const slot = delayed
+    ? Math.min(orderLeadTime, maxSlot)
+    : Math.min(Math.max(orderLeadTime - 1, 0), maxSlot);
+  shifted[slot] += orderQty;
 
+  const inTransitRemaining = shifted.reduce((sum, qty) => sum + qty, 0) - orderQty;
   const inventoryPosition = onHandEnd + inTransitRemaining;
 
   const revenue = sold * config.price;
@@ -82,6 +101,7 @@ export function advancePeriod(state, config, demand, order, options = {}) {
     nextState,
     result: {
       priming,
+      delayed,
       arrival,
       demand: priming ? null : demand,
       sold,

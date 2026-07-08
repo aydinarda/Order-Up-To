@@ -70,6 +70,7 @@ export async function recordRoundStarted({
   distribution,
   config,
   realizedDemand,
+  delayed = false,
   startedAt
 }) {
   await runQuery("recordRoundStarted", () =>
@@ -87,6 +88,7 @@ export async function recordRoundStarted({
         config_json: config,
         seed: config.seed ?? null,
         realized_demand: realizedDemand,
+        delayed,
         started_at: startedAt
       },
       { onConflict: "game_id,tur_no,round_id" }

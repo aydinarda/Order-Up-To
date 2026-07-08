@@ -33,11 +33,15 @@ function calculateLeaderboard(players, config) {
         profit: acc.profit + entry.profit,
         co2: acc.co2 + entry.co2,
         lost: acc.lost + entry.lost,
+        sold: acc.sold + entry.sold,
         trucks: acc.trucks + entry.trucks,
         ordered: acc.ordered + entry.orderQty
       }),
-      { profit: 0, co2: 0, lost: 0, trucks: 0, ordered: 0 }
+      { profit: 0, co2: 0, lost: 0, sold: 0, trucks: 0, ordered: 0 }
     );
+    // Service level: share of demand actually fulfilled (sold / (sold + lost)).
+    // The priming round contributes neither (no demand), so it's excluded naturally.
+    const demandSeen = totals.sold + totals.lost;
 
     return {
       nickname: player.nickname,
@@ -46,6 +50,7 @@ function calculateLeaderboard(players, config) {
       cumCo2: totals.co2,
       cumLost: totals.lost,
       cumTrucks: totals.trucks,
+      serviceLevelPct: demandSeen > 0 ? (totals.sold / demandSeen) * 100 : null,
       truckFillPct:
         totals.trucks > 0 ? (totals.ordered / (totals.trucks * config.truckCapacity)) * 100 : null,
       leftover: player.inventory.onHand + player.inventory.pipeline.reduce((s, q) => s + q, 0),
@@ -69,6 +74,11 @@ const CONFIG_FIELDS = {
   fixedCostPerTruck: { integer: false, min: 0 },
   co2PerTruck: { integer: false, min: 0 },
   co2PerUnitHeld: { integer: false, min: 0 },
+  // Chance per round of a shared shipping-delay event (heavy rain, port
+  // congestion, ...): freezes every player's pipeline for that round alike.
+  // Not structural — pipeline is already sized for it — so it's adjustable
+  // any time, including as a mid-game "surprise" lever.
+  delayProbability: { integer: false, min: 0, max: 1 },
   seed: { integer: true, min: 0, max: 0xffffffff, preGameOnly: true }
 };
 
@@ -200,6 +210,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         roundHistory: [],
         leaderboard: [],
         activeRoundDemand: null,
+        activeRoundDelayed: false,
         activeRoundOrders: new Map()
       };
 
@@ -449,6 +460,11 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundDemand = isPriming
       ? null
       : sampleDemand(activeGame.distribution, activeGame.rand);
+    // A single shared roll decides a shipping-delay event for the round, so it
+    // hits every player identically (same rule as shared demand). Never rolled
+    // on the priming round — there's nothing in transit yet to delay.
+    activeGame.activeRoundDelayed =
+      !isPriming && activeGame.rand() < (activeGame.config.delayProbability || 0);
     activeGame.activeRoundOrders = new Map();
     activeGame.roundPhase = "active";
     const startedAt = new Date().toISOString();
@@ -461,6 +477,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       distribution: activeGame.distribution,
       config: activeGame.config,
       realizedDemand: activeGame.activeRoundDemand,
+      delayed: activeGame.activeRoundDelayed,
       startedAt
     });
 
@@ -563,6 +580,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
     const endingRound = getRoundForGame(activeGame);
     const realizedDemand = activeGame.activeRoundDemand;
+    const wasDelayed = activeGame.activeRoundDelayed;
     const endedAt = new Date().toISOString();
 
     // Round 1 is the priming round: no demand, opening order arrives with lead
@@ -587,7 +605,11 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         activeGame.config,
         realizedDemand,
         orderQty,
-        { leadTime: isPriming ? 1 : activeGame.config.leadTime, priming: isPriming }
+        {
+          leadTime: isPriming ? 1 : activeGame.config.leadTime,
+          priming: isPriming,
+          delayed: wasDelayed
+        }
       );
 
       const roundResult = {
@@ -641,6 +663,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.roundPhase = "pending";
     activeGame.currentRoundIndex += 1;
     activeGame.activeRoundDemand = null;
+    activeGame.activeRoundDelayed = false;
     activeGame.activeRoundOrders = new Map();
 
     let isTurComplete = false;
@@ -690,7 +713,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       distribution: activeGame.distribution,
       config: activeGame.config,
       leaderboard: activeGame.leaderboard,
-      realizedDemand
+      realizedDemand,
+      delayed: wasDelayed
     });
   });
 
@@ -731,6 +755,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.currentRoundIndex = newHandId - 1;
     activeGame.roundPhase = "pending";
     activeGame.activeRoundDemand = null;
+    activeGame.activeRoundDelayed = false;
     activeGame.activeRoundOrders = new Map();
     activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
 
@@ -830,6 +855,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       roundHistory: [],
       leaderboard: [],
       activeRoundDemand: null,
+      activeRoundDelayed: false,
       activeRoundOrders: new Map()
     };
 

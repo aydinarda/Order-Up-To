@@ -23,6 +23,12 @@ function RoundResult({ result }) {
       {result.priming && (
         <p className="muted-text">Priming round — no sales. Your opening order is on its way.</p>
       )}
+      {result.delayed && (
+        <p className="delay-banner">
+          ⛈️ Shipping delay this round — every shipment in transit was held up, including any
+          order placed this round.
+        </p>
+      )}
       <div className="result-grid">
         <p>Shipment arrived</p>
         <strong>{result.arrival}</strong>

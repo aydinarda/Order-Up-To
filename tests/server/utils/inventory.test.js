@@ -8,10 +8,10 @@ import {
 
 const config = { ...DEFAULT_CONFIG, leadTime: 2 };
 
-test("initial state is an empty warehouse with an empty pipeline of length L", () => {
+test("initial state is an empty warehouse with a pipeline of length L+1 (reserve slot for delays)", () => {
   const state = createInitialState(config);
   assert.equal(state.onHand, 0);
-  assert.deepEqual(state.pipeline, [0, 0]);
+  assert.deepEqual(state.pipeline, [0, 0, 0]);
 });
 
 test("priming round: no sales, opening order arrives with lead time 1", () => {
@@ -27,7 +27,7 @@ test("priming round: no sales, opening order arrives with lead time 1", () => {
   assert.equal(result.orderQty, 150);
   assert.equal(result.trucks, 2);
   // Opening order sits at pipeline[0] -> arrives next round.
-  assert.deepEqual(nextState.pipeline, [150, 0]);
+  assert.deepEqual(nextState.pipeline, [150, 0, 0]);
 
   // Next round it arrives and can be sold.
   const step2 = advancePeriod(nextState, config, 100, 0);
@@ -43,7 +43,7 @@ test("a normal order placed in round t arrives exactly at the start of round t+L
   let step = advancePeriod(state, config, 0, 100);
   assert.equal(step.result.orderQty, 100);
   assert.equal(step.nextState.onHand, 0);
-  assert.deepEqual(step.nextState.pipeline, [0, 100]);
+  assert.deepEqual(step.nextState.pipeline, [0, 100, 0]);
 
   // Round t+1: nothing arrives yet.
   step = advancePeriod(step.nextState, config, 0, 0);
@@ -157,4 +157,60 @@ test("state object is not mutated", () => {
   const state = { onHand: 100, pipeline: [10, 20] };
   advancePeriod(state, config, 50, 120);
   assert.deepEqual(state, { onHand: 100, pipeline: [10, 20] });
+});
+
+// ── Shipping-delay events ──────────────────────────────────────────────────
+// A delayed round freezes the whole pipeline: nothing arrives (even if
+// something was due), nothing shifts, and the new order is queued one slot
+// deeper so it still needs a full `orderLeadTime` of normal rounds once the
+// freeze lifts. This is why the pipeline is sized leadTime+1.
+
+test("a delayed round delivers nothing, even if a shipment was due", () => {
+  const state = { onHand: 20, pipeline: [80, 0, 0] }; // 80 was due this round
+  const { nextState, result } = advancePeriod(state, config, 50, 0, { delayed: true });
+  assert.equal(result.delayed, true);
+  assert.equal(result.arrival, 0); // the due shipment does NOT arrive
+  assert.equal(result.sold, 20); // only pre-existing on-hand can be sold
+  assert.equal(result.lost, 30);
+  // Nothing shifted: the 80 units are still exactly one round away.
+  assert.deepEqual(nextState.pipeline, [80, 0, 0]);
+});
+
+test("an order placed during a delayed round lands one slot deeper", () => {
+  const state = createInitialState(config); // pipeline [0,0,0], leadTime 2
+  const { nextState } = advancePeriod(state, config, 0, 90, { delayed: true });
+  // Normal (non-delayed) placement would be slot (leadTime-1)=1; delayed -> slot leadTime=2.
+  assert.deepEqual(nextState.pipeline, [0, 0, 90]);
+});
+
+test("a delayed shipment arrives exactly one round later than normal", () => {
+  let state = createInitialState(config); // leadTime 2
+
+  // Round 1 (normal): order 100. Would normally arrive round 3.
+  let step = advancePeriod(state, config, 0, 100);
+  state = step.nextState;
+
+  // Round 2: a delay hits. Nothing progresses.
+  step = advancePeriod(state, config, 0, 0, { delayed: true });
+  assert.equal(step.result.arrival, 0);
+  state = step.nextState;
+
+  // Round 3: would have been the normal arrival round — still nothing, because
+  // round 2's freeze pushed everything back by one.
+  step = advancePeriod(state, config, 0, 0);
+  assert.equal(step.result.arrival, 0);
+  state = step.nextState;
+
+  // Round 4: the delayed shipment finally arrives.
+  step = advancePeriod(state, config, 0, 0);
+  assert.equal(step.result.arrival, 100);
+});
+
+test("back-to-back delayed rounds do not throw and keep a fixed pipeline length", () => {
+  let state = createInitialState(config);
+  let step = advancePeriod(state, config, 0, 60, { delayed: true });
+  state = step.nextState;
+  step = advancePeriod(state, config, 0, 40, { delayed: true });
+  assert.equal(step.nextState.pipeline.length, config.leadTime + 1);
+  assert.equal(step.nextState.pipeline.reduce((s, q) => s + q, 0), 100);
 });

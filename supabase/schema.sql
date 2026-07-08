@@ -31,6 +31,7 @@ create table if not exists rounds (
   config_json jsonb,
   seed bigint,
   realized_demand int,
+  delayed boolean not null default false,
   started_at timestamptz not null default now(),
   ended_at timestamptz,
   unique (game_id, tur_no, round_id)

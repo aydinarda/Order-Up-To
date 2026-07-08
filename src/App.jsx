@@ -39,7 +39,8 @@ const CONFIG_FIELD_DEFS = [
   { key: "truckCapacity", label: "Truck capacity (units)" },
   { key: "fixedCostPerTruck", label: "Truck cost ($/truck)" },
   { key: "co2PerTruck", label: "CO₂ per truck (kg)" },
-  { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" }
+  { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" },
+  { key: "delayProbability", label: "Shipping delay chance (0–1)", max: 1, step: 0.05 }
 ];
 
 function draftFromConfig(config) {
@@ -373,12 +374,13 @@ function App() {
         applyServerConfig(data.config);
       }
       setLeaderboardRows(data.leaderboard || []);
+      const delayNote = data.delayed ? " ⛈️ A shipping delay hit every player's pipeline this round." : "";
       setStatusMessage(
         data.finished
           ? "Game complete."
           : data.realizedDemand == null
-            ? `Priming round ended. Opening orders shipped. Round ${data.nextRound?.id} is next.`
-            : `Round ended. Next round is ${data.nextRound?.id}. Realized demand was ${data.realizedDemand}.`
+            ? `Priming round ended. Opening orders shipped. Round ${data.nextRound?.id} is next.${delayNote}`
+            : `Round ended. Next round is ${data.nextRound?.id}. Realized demand was ${data.realizedDemand}.${delayNote}`
       );
       setIsRoundSubmitted(false);
       await syncGameState();
@@ -747,8 +749,8 @@ function App() {
       <main className="page auth-page">
         <section className="card auth-card">
           <div className="auth-header">
-            <h1 className="auth-title">Island Market</h1>
-            <p className="auth-subtitle">Order-Up-To Inventory Game</p>
+            <h1 className="auth-title">Black Sea Gold</h1>
+            <p className="auth-subtitle">The Hazelnut Supply Challenge</p>
             <p className="muted">
               Enter a nickname to join an active game. Use admin mode to create one.
             </p>
@@ -760,7 +762,7 @@ function App() {
               type="text"
               value={nicknameInput}
               onChange={(event) => setNicknameInput(event.target.value)}
-              placeholder="ex: ops_master"
+              placeholder="ex: hub_manager"
               maxLength={20}
             />
 
@@ -850,12 +852,12 @@ function App() {
       {emojiRaining ? <TruckSweep key={`truck-${emojiBurstKey}`} /> : null}
       <main className={`page ${showLeaderboard ? "page-wide" : ""} ${emojiRaining ? "screen-rumble" : ""}`}>
       <header className="hero">
-        <p className="eyebrow">Island Market</p>
+        <p className="eyebrow">Black Sea Gold Cooperative</p>
         <h1>Welcome, {nickname}</h1>
         <p className="muted">
           {isGameFinished
-            ? "Game complete. Review your final round below or head to the leaderboard."
-            : "Decide how many units to order each round — keep shelves stocked without burning carbon."}
+            ? "Season complete. Review your final round below or head to the leaderboard."
+            : "Decide how many hazelnuts to order each round — keep the city hub stocked without losing the cooperative's sustainability commitment."}
         </p>
       </header>
 
@@ -934,7 +936,7 @@ function App() {
 
           </div>
           <div className="config-form">
-            {CONFIG_FIELD_DEFS.map(({ key, label, preGameOnly }) => (
+            {CONFIG_FIELD_DEFS.map(({ key, label, preGameOnly, max, step }) => (
               <label key={key} htmlFor={`config-${key}`}>
                 {label}
                 {preGameOnly && adminRoundHistory.length > 0 ? " (locked)" : ""}
@@ -942,6 +944,8 @@ function App() {
                   id={`config-${key}`}
                   type="number"
                   min="0"
+                  max={max}
+                  step={step}
                   value={configDraft[key] ?? ""}
                   onChange={(event) => {
                     setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }));

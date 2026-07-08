@@ -34,7 +34,10 @@ function ConfigDetail({ config }) {
         chips={[
           { label: "Lead time", value: `${config.leadTime} rounds` },
           { label: "Truck cap.", value: `${config.truckCapacity} u` },
-          { label: "Truck cost", value: `$${config.fixedCostPerTruck}` }
+          { label: "Truck cost", value: `$${config.fixedCostPerTruck}` },
+          ...(config.delayProbability > 0
+            ? [{ label: "Delay risk", value: `${Math.round(config.delayProbability * 100)}%/round` }]
+            : [])
         ]}
       />
       <ChipGroup

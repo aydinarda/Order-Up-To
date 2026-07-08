@@ -37,7 +37,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
       {priming && (
         <p className="order-preview">
           Priming round — no sales yet. Place your opening order to stock the
-          warehouse; it arrives next round.
+          city hub; it arrives next round.
         </p>
       )}
 
@@ -57,7 +57,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
       </div>
 
       <form onSubmit={handleSubmit} className="order-form">
-        <label htmlFor="order-qty">Order quantity (units)</label>
+        <label htmlFor="order-qty">Order quantity (kg)</label>
         <input
           id="order-qty"
           type="number"
@@ -76,8 +76,8 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
                 (fill !== null ? ` (${fill}% full)` : "") +
                 ` — arrives in ${arrivalRounds} round${arrivalRounds === 1 ? "" : "s"}`
               : priming
-                ? "No opening order — you'll start round 2 with an empty warehouse."
-                : "No order this round — shelves run down from stock on hand."}
+                ? "No opening order — you'll start round 2 with an empty hub."
+                : "No order this round — the hub runs down from stock on hand."}
           </p>
         )}
 

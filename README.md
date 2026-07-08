@@ -1,6 +1,6 @@
-# Order-Up-To Game
+# Black Sea Gold: The Hazelnut Supply Challenge
 
-Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game. Students set an order-up-to level `S` each round against a shared randomized demand, with carry-over inventory, a delivery lead time, truck-based transport CO₂ and storage CO₂; an admin controls the game flow round by round. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂.
+Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game, themed around a hazelnut cooperative distributing to a city hub. Students decide an order quantity each round against a shared randomized demand, with carry-over inventory, a delivery lead time (with an admin-configurable chance of a shared shipping delay event), truck-based transport CO₂ and storage CO₂; an admin controls the game flow round by round. Round 1 is a priming round: the warehouse starts empty and players place an opening order that arrives with a 1-round lead time. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂.
 
 **Stack:** React + Vite (frontend) · Express + WebSocket (backend) · Supabase PostgreSQL (optional persistence)
 

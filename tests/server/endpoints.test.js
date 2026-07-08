@@ -133,7 +133,8 @@ test("pre-game lead-time change reshapes every player's empty pipeline", async (
 
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.inventory.onHand, 0); // warehouse always starts empty
-  assert.equal(gs.body.player.inventory.pipeline.length, 4);
+  // Pipeline carries one reserve slot beyond leadTime for shipping-delay events.
+  assert.equal(gs.body.player.inventory.pipeline.length, 5);
 });
 
 // ── /submit-order rate limiting ──────────────────────────────────────────────
@@ -192,4 +193,54 @@ test("game-state hides roundHistory from non-admins but shows it to admins", asy
   const adminView = await request(app).get("/game-state").query({ gameId, playerId, adminToken });
   assert.ok(Array.isArray(adminView.body.roundHistory));
   assert.equal(adminView.body.roundHistory.length, 1);
+});
+
+// ── Shipping-delay events (delayProbability) ────────────────────────────────
+test("delayProbability=1 forces a shared delay hitting every player identically", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId: p1 } = await createGame(app, {
+    handsPerTur: 3,
+    config: { delayProbability: 1, leadTime: 2 }
+  });
+  const p2 = (await request(app).post("/start-game").send({ nickname: "p2", gameId })).body
+    .playerId;
+
+  // Round 1 (priming): never rolled for delay, no matter the probability.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId: p1, orderQty: 100 });
+  await request(app).post("/submit-order").send({ gameId, playerId: p2, orderQty: 100 });
+  let end = await request(app).post("/end-round").send({ gameId, adminToken });
+  assert.equal(end.body.delayed, false);
+
+  // Round 2: guaranteed delay. Both players' shipments freeze identically.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId: p1, orderQty: 0 });
+  await request(app).post("/submit-order").send({ gameId, playerId: p2, orderQty: 0 });
+  end = await request(app).post("/end-round").send({ gameId, adminToken });
+  assert.equal(end.body.delayed, true);
+
+  const gs1 = await request(app).get("/game-state").query({ gameId, playerId: p1 });
+  const gs2 = await request(app).get("/game-state").query({ gameId, playerId: p2 });
+  const r2p1 = gs1.body.player.history[1];
+  const r2p2 = gs2.body.player.history[1];
+  assert.equal(r2p1.delayed, true);
+  assert.equal(r2p2.delayed, true);
+  // Both had 100 en route from their round-1 opening order; the delay held it
+  // back for both alike, so neither saw anything arrive this round.
+  assert.equal(r2p1.arrival, 0);
+  assert.equal(r2p2.arrival, 0);
+});
+
+test("delayProbability=0 (default) never triggers a delay", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app, { handsPerTur: 3 });
+
+  for (let i = 0; i < 3; i++) {
+    await request(app).post("/start-round").send({ gameId, adminToken });
+    const end = await request(app).post("/end-round").send({ gameId, adminToken });
+    assert.equal(end.body.delayed, false);
+  }
+
+  const gs = await request(app).get("/game-state").query({ gameId, playerId });
+  assert.ok(gs.body.player.history.every((round) => round.delayed === false));
 });

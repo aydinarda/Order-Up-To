@@ -111,8 +111,8 @@ beforeEach(() => {
 describe("App", () => {
   it("shows the join screen when there is no session", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: /island market/i })).toBeInTheDocument();
-    expect(screen.getByText(/order-up-to inventory game/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /black sea gold/i })).toBeInTheDocument();
+    expect(screen.getByText(/hazelnut supply challenge/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/nickname/i)).toBeInTheDocument();
   });
 
