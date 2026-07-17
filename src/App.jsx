@@ -799,15 +799,35 @@ function App() {
   if (!nickname) {
     return (
       <main className="page auth-page">
-        <section className="card auth-card">
-          <div className="auth-header">
+        <div className="auth-cover">
+          <section className="auth-brand">
+            <span className="brand-seal" aria-hidden="true">🌰</span>
             <h1 className="auth-title">Black Sea Gold</h1>
             <p className="auth-subtitle">The Hazelnut Supply Challenge</p>
-            <p className="muted">
+            <p className="auth-story">
+              Run the cooperative's city hub through the autumn season: keep the shelves
+              stocked with premium hazelnuts while holding down transport emissions and
+              excess inventory.
+            </p>
+            <div className="auth-pillars">
+              <span className="auth-pillar">
+                <span className="auth-pillar-icon">💰</span>Profit
+              </span>
+              <span className="auth-pillar">
+                <span className="auth-pillar-icon">📦</span>Service
+              </span>
+              <span className="auth-pillar">
+                <span className="auth-pillar-icon">🌿</span>CO₂
+              </span>
+            </div>
+          </section>
+
+          <section className="card auth-card">
+            <h2 className="auth-card-title">Join the season</h2>
+            <p className="muted auth-card-hint">
               Enter a nickname to join an active game. Use admin mode to create one.
             </p>
-          </div>
-          <form onSubmit={handleNicknameSubmit} className="order-form">
+            <form onSubmit={handleNicknameSubmit} className="order-form">
             <label htmlFor="nickname">Nickname</label>
             <input
               id="nickname"
@@ -853,7 +873,8 @@ function App() {
             {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
             <button type="submit">Start Game</button>
           </form>
-        </section>
+          </section>
+        </div>
       </main>
     );
   }
@@ -912,6 +933,29 @@ function App() {
             : "Decide how many hazelnuts to order each round — keep the city hub stocked without losing the cooperative's sustainability commitment."}
         </p>
       </header>
+
+      <section className="kpi-strip" aria-label="Your season KPIs">
+        <div className="kpi-tile kpi-profit">
+          <span className="kpi-label">Cumulative profit</span>
+          <strong className="kpi-value">
+            ${(isGameFinished ? overallProfit : cumulativeProfit).toLocaleString("en-US")}
+          </strong>
+        </div>
+        <div className="kpi-tile kpi-service">
+          <span className="kpi-label">Service level</span>
+          <strong className="kpi-value">
+            {serviceLevelPct != null ? `${Math.round(serviceLevelPct)}%` : "—"}
+          </strong>
+        </div>
+        <div className="kpi-tile kpi-lost">
+          <span className="kpi-label">Lost sales</span>
+          <strong className="kpi-value">{cumulativeLost}</strong>
+        </div>
+        <div className="kpi-tile kpi-co2">
+          <span className="kpi-label">Cumulative CO₂</span>
+          <strong className="kpi-value">{Math.round(cumulativeCo2)} kg</strong>
+        </div>
+      </section>
 
       {announcement ? (
         <section className="card announcement-banner">
@@ -1166,17 +1210,6 @@ function App() {
       {!isAdmin && statusMessage ? <p className="status-line">{statusMessage}</p> : null}
       {!isAdmin && errorMessage ? <p className="error-text">{errorMessage}</p> : null}
 
-          <section className="card sticky-score">
-            <p>Current cumulative profit</p>
-            <strong>
-              ${(isGameFinished ? overallProfit : cumulativeProfit).toLocaleString("en-US")}
-            </strong>
-            <p className="co2-line">Cumulative CO₂: {Math.round(cumulativeCo2)} kg</p>
-            <p className="score-kpi-line">
-              Service level: {serviceLevelPct != null ? `${Math.round(serviceLevelPct)}%` : "—"}
-              {" · "}Lost sales: {cumulativeLost}
-            </p>
-          </section>
         </div>
 
         <aside className="game-side">

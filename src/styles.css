@@ -1,13 +1,29 @@
 :root {
-  --bg: #f4efe6;
-  --bg-alt: #fff8f0;
-  --surface: #fffcf8;
-  --text: #38332d;
-  --muted: #7a7167;
-  --accent: #ff5f2e;
-  --accent-dark: #cf4319;
-  --line: #e5dbcd;
-  --success: #1f7a52;
+  /* Orchard & Hazelnut palette — bespoke to Black Sea Gold. */
+  --bg: #eef0e4; /* pale sage-stone (background fallback) */
+  --bg-alt: #f6f1e6; /* cream inset */
+  --surface: #fbf8f0; /* cream card */
+  --surface-2: #f1ead9; /* second surface inside cards */
+  --text: #2c2620; /* dark cocoa */
+  --muted: #7c7161; /* muted brown */
+
+  --primary: #3f7d4e; /* orchard green — primary interactive */
+  --primary-dark: #2f6b3f;
+  --hazelnut: #8a5a2b; /* secondary accent / brown */
+  --hazelnut-dark: #6f4720;
+  --gold: #c8912f; /* highlight: profit, awards, seal */
+  --gold-soft: rgba(200, 145, 47, 0.14);
+  --sea: #2e6f8e; /* Black Sea nod — links / info tone */
+
+  --line: #e2d9c6; /* warm border */
+  --success: #2f7d52;
+  --danger: #b23b2b;
+
+  /* Legacy names kept so existing rules pick up the new palette; they now point
+     at the orchard-green primary instead of the borrowed orange accent. */
+  --accent: var(--primary);
+  --accent-dark: var(--primary-dark);
+
   font-family: "Space Grotesk", sans-serif;
 }
 
@@ -19,9 +35,9 @@ body {
   margin: 0;
   color: var(--text);
   min-height: 100vh;
-  /* Tint katmanı görseli yumuşatır; alpha'yı düşürürsen görsel netleşir, artırırsan soluklaşır */
+  /* Orchard-tinted veil over the themed landscape; lower alpha = sharper image. */
   background:
-    linear-gradient(rgba(244, 239, 230, 0.55), rgba(255, 248, 240, 0.68)),
+    linear-gradient(rgba(232, 238, 222, 0.58), rgba(246, 241, 230, 0.72)),
     url("/background.png") center center / cover no-repeat fixed;
 }
 
@@ -79,26 +95,186 @@ body {
   min-height: 100vh;
   place-items: center;
   display: grid;
+  width: min(100%, 1040px);
+}
+
+/* Branded landing cover: story panel on the left, join card on the right. */
+.auth-cover {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 24px;
+  align-items: center;
+}
+
+.auth-brand {
+  padding: 8px 6px;
+}
+
+.brand-seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  font-size: 1.9rem;
+  border-radius: 50%;
+  background: var(--gold-soft);
+  border: 2px solid rgba(200, 145, 47, 0.5);
+  margin-bottom: 14px;
+}
+
+.auth-story {
+  margin: 16px 0 0;
+  max-width: 42ch;
+  color: var(--text);
+  font-size: 1.02rem;
+  line-height: 1.55;
+}
+
+.auth-pillars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.auth-pillar {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 0.9rem;
+  box-shadow: 0 6px 16px rgba(22, 20, 16, 0.05);
+}
+
+.auth-pillar-icon {
+  font-size: 1rem;
+}
+
+.auth-card-title {
+  color: var(--hazelnut-dark);
+}
+
+.auth-card-hint {
+  margin: 6px 0 0;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 760px) {
+  .auth-cover {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .auth-brand {
+    text-align: center;
+  }
+
+  .auth-pillars {
+    justify-content: center;
+  }
+
+  .auth-story {
+    margin-left: auto;
+    margin-right: auto;
+  }
 }
 
 .hero {
   padding: 8px 4px;
 }
 
+/* In-game KPI dashboard: four stat tiles across the top of the play screen. */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kpi-tile {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 3px solid var(--line);
+  box-shadow: 0 8px 22px rgba(22, 20, 16, 0.05);
+}
+
+.kpi-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.kpi-profit {
+  border-top-color: var(--gold);
+}
+.kpi-profit .kpi-value {
+  color: var(--hazelnut-dark);
+}
+
+.kpi-service {
+  border-top-color: var(--primary);
+}
+
+.kpi-lost {
+  border-top-color: var(--hazelnut);
+}
+
+.kpi-co2 {
+  border-top-color: var(--sea);
+}
+
+@media (max-width: 640px) {
+  .kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kpi-value {
+    font-size: 1.3rem;
+  }
+}
+
 h1,
-h2,
+h2 {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
 h3 {
   margin: 0;
-  font-family: "Archivo Black", sans-serif;
-  letter-spacing: 0.02em;
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 h1 {
-  font-size: clamp(1.7rem, 3.5vw, 2.4rem);
+  font-size: clamp(1.8rem, 3.6vw, 2.5rem);
+  font-weight: 900;
+  line-height: 1.05;
 }
 
 h2 {
-  font-size: clamp(1.2rem, 2.8vw, 1.6rem);
+  font-size: clamp(1.25rem, 2.8vw, 1.65rem);
+  font-weight: 600;
 }
 
 h3 {
@@ -128,30 +304,26 @@ h3 {
 }
 
 .auth-card {
-  width: min(100%, 520px);
-  padding: 32px 28px;
-  box-shadow: 0 24px 60px rgba(22, 20, 16, 0.18);
-}
-
-.auth-header {
-  text-align: center;
-  margin-bottom: 6px;
+  width: 100%;
+  padding: 30px 26px;
+  border-top: 3px solid var(--gold);
+  box-shadow: 0 24px 60px rgba(22, 20, 16, 0.16);
 }
 
 .auth-title {
-  font-size: clamp(2.1rem, 5.5vw, 3rem);
-  line-height: 1.02;
-  color: var(--accent-dark);
+  font-size: clamp(2.3rem, 5.5vw, 3.2rem);
+  line-height: 1.0;
+  color: var(--hazelnut-dark);
 }
 
 .auth-subtitle {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   font-family: "Space Grotesk", sans-serif;
-  font-size: clamp(0.95rem, 2.2vw, 1.15rem);
+  font-size: clamp(0.95rem, 2.2vw, 1.12rem);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--muted);
+  color: var(--primary);
 }
 
 .auth-header .muted {
@@ -227,7 +399,7 @@ button:disabled {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #ff8a47, #ff5f2e);
+  background: linear-gradient(90deg, #5fa86e, #3f7d4e);
   transition: width 0.35s ease;
 }
 
@@ -240,14 +412,14 @@ button:disabled {
 }
 
 .profit-line {
-  color: var(--success);
+  color: var(--hazelnut-dark);
   font-weight: 700;
   margin: 14px 0 0;
 }
 
 .status-line {
   margin: 0;
-  color: #2f6fca;
+  color: var(--sea);
   font-size: 0.9rem;
 }
 
@@ -353,17 +525,18 @@ button.danger:hover {
   letter-spacing: 0.06em;
 }
 
-.total-profit {
+.leaderboard-table tr.top-rank td {
+  background: var(--gold-soft);
   font-weight: 700;
-  color: var(--success);
 }
 
-.sticky-score {
-  position: sticky;
-  bottom: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.leaderboard-table tr.top-rank td:first-child {
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+
+.total-profit {
+  font-weight: 700;
+  color: var(--hazelnut-dark);
 }
 
 .round-info h2 {
@@ -408,8 +581,8 @@ button.danger:hover {
   gap: 8px;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(255, 95, 46, 0.08);
-  border: 1px solid rgba(255, 95, 46, 0.2);
+  background: rgba(63, 125, 78, 0.08);
+  border: 1px solid rgba(63, 125, 78, 0.22);
 }
 
 .dist-badge-label {
@@ -424,47 +597,6 @@ button.danger:hover {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--text);
-}
-
-.emoji-rain {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 60;
-}
-
-.emoji-rain-piece {
-  position: absolute;
-  top: 0;
-  will-change: transform, opacity;
-  animation-name: emoji-fall;
-  animation-timing-function: ease-in;
-  animation-fill-mode: forwards;
-  user-select: none;
-}
-
-@keyframes emoji-fall {
-  0% {
-    transform: translate3d(0, -12vh, 0) rotate(0deg);
-    opacity: 0;
-  }
-  10% {
-    opacity: 1;
-  }
-  85% {
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(var(--drift), 112vh, 0) rotate(var(--rotate));
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .emoji-rain {
-    display: none;
-  }
 }
 
 @keyframes rise {
@@ -613,9 +745,17 @@ button.danger:hover {
   margin-bottom: 6px;
 }
 
+/* Waypoints along the road from the processing facility to the city hub. */
 .pipeline-slots {
   display: flex;
   gap: 8px;
+  align-items: stretch;
+  padding: 10px 8px;
+  border-radius: 12px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 14px, rgba(124, 113, 97, 0.28) 14px 26px)
+      left 50% / 100% 2px no-repeat,
+    var(--surface-2);
 }
 
 .pipeline-slot {
@@ -627,17 +767,24 @@ button.danger:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  background: var(--surface);
 }
 
 .pipeline-slot.filled {
   border-style: solid;
+  border-color: rgba(63, 125, 78, 0.5);
   background: #fff;
+  box-shadow: 0 4px 12px rgba(63, 125, 78, 0.1);
 }
 
 .pipeline-qty {
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--text);
+}
+
+.pipeline-slot.filled .pipeline-qty {
+  color: var(--primary-dark);
 }
 
 .pipeline-eta {
@@ -854,8 +1001,8 @@ button.danger:hover {
 }
 
 .delivery-mode.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(255, 95, 46, 0.25);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(63, 125, 78, 0.28);
 }
 
 .delivery-mode:disabled {
@@ -863,9 +1010,41 @@ button.danger:hover {
   cursor: not-allowed;
 }
 
+.delivery-mode-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.delivery-mode-icon {
+  font-size: 1.15rem;
+}
+
 .delivery-mode-name {
   font-weight: 700;
   color: var(--text);
+}
+
+.delivery-mode-tag {
+  margin-left: auto;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tag-consolidated {
+  color: var(--primary-dark);
+  background: rgba(63, 125, 78, 0.13);
+}
+
+.tag-express {
+  color: var(--hazelnut-dark);
+  background: rgba(200, 145, 47, 0.16);
 }
 
 .delivery-mode-detail {
@@ -909,10 +1088,4 @@ button.danger:hover {
   margin: 0;
   font-weight: 600;
   color: #6b4f16;
-}
-
-.score-kpi-line {
-  margin-top: 4px;
-  font-size: 0.9rem;
-  color: var(--muted);
 }

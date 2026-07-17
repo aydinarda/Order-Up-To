@@ -36,7 +36,7 @@ function Leaderboard({ rows, title }) {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={`${row.nickname}-${row.rank}`}>
+              <tr key={`${row.nickname}-${row.rank}`} className={row.rank === 1 ? "top-rank" : undefined}>
                 <td>{row.rank}</td>
                 {hasFronts && <td>{row.front}</td>}
                 <td>{row.nickname}</td>

@@ -43,6 +43,8 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         {
           id: "consolidated",
           label: "Consolidated truck",
+          icon: "🚚",
+          tag: "Efficient",
           cap: config.truckCapacity,
           cost: config.fixedCostPerTruck,
           co2: config.co2PerTruck,
@@ -51,6 +53,8 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         {
           id: "express",
           label: "Express van",
+          icon: "🚐",
+          tag: "Fast · costly",
           cap: config.expressCapacity,
           cost: config.expressFixedCost,
           co2: config.expressCo2,
@@ -97,7 +101,11 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
               onClick={() => setMode(opt.id)}
               disabled={disabled}
             >
-              <span className="delivery-mode-name">{opt.label}</span>
+              <span className="delivery-mode-head">
+                <span className="delivery-mode-icon" aria-hidden="true">{opt.icon}</span>
+                <span className="delivery-mode-name">{opt.label}</span>
+                <span className={`delivery-mode-tag tag-${opt.id}`}>{opt.tag}</span>
+              </span>
               <span className="delivery-mode-detail">
                 {opt.cap} u/{opt.id === "express" ? "van" : "truck"} · arrives in{" "}
                 {opt.lead} round{opt.lead === 1 ? "" : "s"}

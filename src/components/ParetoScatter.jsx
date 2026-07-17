@@ -5,9 +5,14 @@
 // player's own dot gets an accent ring. Identity is never color-alone: dots are
 // direct-labeled and the leaderboard table sits next to the chart.
 
-const FRONT_RAMP = ["#2a78d6", "#5598e7", "#86b6ef"];
-const SURFACE = "#fffcf8";
-const ACCENT = "#ff5f2e";
+// Ordinal single-hue orchard-green ramp over Pareto fronts; the self-dot ring is
+// gold, matching the Orchard & Hazelnut palette.
+const FRONT_RAMP = ["#2f6b3f", "#5c9e6a", "#9cc6a3"];
+const SURFACE = "#fbf8f0";
+const ACCENT = "#c8912f";
+const GRID = "#e2d9c6";
+const AXIS = "#7c7161";
+const LABEL = "#2c2620";
 
 function frontColor(front) {
   return FRONT_RAMP[Math.min(front - 1, FRONT_RAMP.length - 1)];
@@ -114,7 +119,7 @@ function ParetoScatter({ rows, selfNickname }) {
             x2={x(t)}
             y1={margin.top}
             y2={margin.top + plotH}
-            stroke="#e5dbcd"
+            stroke={GRID}
             strokeWidth="1"
           />
         ))}
@@ -125,7 +130,7 @@ function ParetoScatter({ rows, selfNickname }) {
             x2={margin.left + plotW}
             y1={y(t)}
             y2={y(t)}
-            stroke="#e5dbcd"
+            stroke={GRID}
             strokeWidth="1"
           />
         ))}
@@ -136,7 +141,7 @@ function ParetoScatter({ rows, selfNickname }) {
           x2={margin.left + plotW}
           y1={margin.top + plotH}
           y2={margin.top + plotH}
-          stroke="#7a7167"
+          stroke={AXIS}
           strokeWidth="1"
         />
         <line
@@ -144,7 +149,7 @@ function ParetoScatter({ rows, selfNickname }) {
           x2={margin.left}
           y1={margin.top}
           y2={margin.top + plotH}
-          stroke="#7a7167"
+          stroke={AXIS}
           strokeWidth="1"
         />
         {xTicks.map((t) => (
@@ -154,7 +159,7 @@ function ParetoScatter({ rows, selfNickname }) {
             y={margin.top + plotH + 18}
             textAnchor="middle"
             fontSize="11"
-            fill="#7a7167"
+            fill={AXIS}
           >
             {formatTick(t)}
           </text>
@@ -166,7 +171,7 @@ function ParetoScatter({ rows, selfNickname }) {
             y={y(t) + 4}
             textAnchor="end"
             fontSize="11"
-            fill="#7a7167"
+            fill={AXIS}
           >
             {formatTick(t)}
           </text>
@@ -176,7 +181,7 @@ function ParetoScatter({ rows, selfNickname }) {
           y={height - 12}
           textAnchor="middle"
           fontSize="12"
-          fill="#38332d"
+          fill={LABEL}
         >
           Cumulative CO₂ (kg) →
         </text>
@@ -185,7 +190,7 @@ function ParetoScatter({ rows, selfNickname }) {
           y={margin.top + plotH / 2}
           textAnchor="middle"
           fontSize="12"
-          fill="#38332d"
+          fill={LABEL}
           transform={`rotate(-90 16 ${margin.top + plotH / 2})`}
         >
           Cumulative profit ($) →
@@ -224,7 +229,7 @@ function ParetoScatter({ rows, selfNickname }) {
                   y={cy - 8}
                   fontSize="11"
                   fontWeight={isSelf ? "700" : "400"}
-                  fill="#38332d"
+                  fill={LABEL}
                 >
                   {row.nickname}
                   {isSelf ? " (you)" : ""}
