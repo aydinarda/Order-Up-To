@@ -18,7 +18,8 @@ import {
   setDistribution,
   startGame,
   startRound,
-  submitOrder
+  submitOrder,
+  announce
 } from "./utils/api";
 import {
   saveGameSession,
@@ -39,6 +40,9 @@ const CONFIG_FIELD_DEFS = [
   { key: "truckCapacity", label: "Truck capacity (units)" },
   { key: "fixedCostPerTruck", label: "Truck cost ($/truck)" },
   { key: "co2PerTruck", label: "CO₂ per truck (kg)" },
+  { key: "expressCapacity", label: "Express van capacity (units)" },
+  { key: "expressFixedCost", label: "Express van cost ($/van)" },
+  { key: "expressCo2", label: "CO₂ per express van (kg)" },
   { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" },
   { key: "delayProbability", label: "Shipping delay chance (0–1)", max: 1, step: 0.05 }
 ];
@@ -86,6 +90,8 @@ function App() {
   const [adminRoundHistory, setAdminRoundHistory] = useState([]);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [announcement, setAnnouncement] = useState(null);
+  const [announcementDraft, setAnnouncementDraft] = useState("");
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [showFinalLeaderboard, setShowFinalLeaderboard] = useState(false);
   const [emojiBurstKey, setEmojiBurstKey] = useState(0);
@@ -101,6 +107,22 @@ function App() {
     () => history.reduce((sum, row) => sum + (row.co2 || 0), 0),
     [history]
   );
+
+  // Cumulative service level = share of demand met from stock. The priming round
+  // has no demand, so it contributes nothing to either total.
+  const { cumulativeLost, serviceLevelPct } = useMemo(() => {
+    let sold = 0;
+    let lost = 0;
+    for (const row of history) {
+      sold += row.sold || 0;
+      lost += row.lost || 0;
+    }
+    const demandSeen = sold + lost;
+    return {
+      cumulativeLost: lost,
+      serviceLevelPct: demandSeen > 0 ? (sold / demandSeen) * 100 : null
+    };
+  }, [history]);
 
   const applyServerConfig = useCallback((config) => {
     setGameConfig(config);
@@ -161,6 +183,7 @@ function App() {
               setInventory(data.player.inventory);
             }
             setTotalRounds(data.totalRounds || 12);
+            setAnnouncement(data.announcement ?? null);
             if (data.roundHistory) {
               setAdminRoundHistory(data.roundHistory);
             }
@@ -194,6 +217,7 @@ function App() {
     setCurrentRound(data.currentRound);
     setRoundPhase(data.roundPhase || "pending");
     setTotalRounds(data.totalRounds || 12);
+    setAnnouncement(data.announcement ?? null);
 
     if (data.distribution) {
       const shouldPreserveAdminDraft =
@@ -298,6 +322,7 @@ function App() {
         setInventory(data.inventory);
       }
       setTotalRounds(data.totalRounds);
+      setAnnouncement(data.announcement ?? null);
       setTurHistory([]);
       setHistory([]);
       setLastRoundResult(null);
@@ -324,14 +349,14 @@ function App() {
     }
   };
 
-  const handleOrderSubmit = async (orderQty) => {
+  const handleOrderSubmit = async (orderQty, mode = "consolidated") => {
     if (!currentRound || !gameId || !playerId) {
       return;
     }
 
     try {
       setErrorMessage("");
-      const data = await submitOrder({ gameId, playerId, orderQty });
+      const data = await submitOrder({ gameId, playerId, orderQty, mode });
 
       setRoundPhase(data.roundPhase || roundPhase);
       setIsRoundSubmitted(true);
@@ -412,6 +437,8 @@ function App() {
     setIsRoundSubmitted(false);
     setStatusMessage("");
     setErrorMessage("");
+    setAnnouncement(null);
+    setAnnouncementDraft("");
   }, []);
 
   // "One more round?" — append a single extra round and resume the same game.
@@ -466,6 +493,7 @@ function App() {
       setHasUnsavedConfigChanges(false);
       setShowRestartConfirm(false);
       setShowFinalLeaderboard(false);
+      setAnnouncement(null);
       setStatusMessage("Game restarted — back to the beginning.");
       setErrorMessage("");
 
@@ -606,6 +634,25 @@ function App() {
     }
   };
 
+  // Admin broadcasts a free-text note to the class (e.g. announce a demand surge
+  // before raising the distribution). An empty message clears the banner.
+  const handleAnnounce = async (clear = false) => {
+    try {
+      setErrorMessage("");
+      const message = clear ? "" : announcementDraft.trim();
+      const data = await announce({ gameId, adminToken, message });
+      setAnnouncement(data.announcement ?? null);
+      if (clear) {
+        setAnnouncementDraft("");
+        setStatusMessage("Announcement cleared.");
+      } else {
+        setStatusMessage("Announcement sent to the class.");
+      }
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  };
+
   // "Go to Leaderboard" (everyone, once the game is finished) — pull the latest
   // standings, then switch to the dedicated final leaderboard screen.
   const handleGoToLeaderboard = async () => {
@@ -678,6 +725,11 @@ function App() {
           const eventType = message.payload?.type;
 
           if (eventType === "order_submitted") {
+            return;
+          }
+
+          if (eventType === "announcement") {
+            setAnnouncement(message.payload.announcement ?? null);
             return;
           }
 
@@ -861,6 +913,13 @@ function App() {
         </p>
       </header>
 
+      {announcement ? (
+        <section className="card announcement-banner">
+          <span className="announcement-icon" aria-hidden="true">📣</span>
+          <p className="announcement-text">{announcement.message}</p>
+        </section>
+      ) : null}
+
       <div className={`game-layout ${showLeaderboard ? "with-leaderboard" : ""}`}>
         <div className="game-main">
       {isAdmin ? (
@@ -965,6 +1024,31 @@ function App() {
           >
             Set Parameters
           </button>
+
+          <div className="announce-control">
+            <label htmlFor="announce-input">Announce to class</label>
+            <textarea
+              id="announce-input"
+              rows={2}
+              maxLength={280}
+              placeholder="e.g. Bakeries are ramping up for the holidays — expect higher demand."
+              value={announcementDraft}
+              onChange={(event) => setAnnouncementDraft(event.target.value)}
+            />
+            <div className="admin-buttons">
+              <button
+                type="button"
+                onClick={() => handleAnnounce(false)}
+                disabled={!announcementDraft.trim()}
+              >
+                Send Announcement
+              </button>
+              <button type="button" onClick={() => handleAnnounce(true)} disabled={!announcement}>
+                Clear
+              </button>
+            </div>
+          </div>
+
           <div className="admin-buttons">
             <button
               type="button"
@@ -1088,6 +1172,10 @@ function App() {
               ${(isGameFinished ? overallProfit : cumulativeProfit).toLocaleString("en-US")}
             </strong>
             <p className="co2-line">Cumulative CO₂: {Math.round(cumulativeCo2)} kg</p>
+            <p className="score-kpi-line">
+              Service level: {serviceLevelPct != null ? `${Math.round(serviceLevelPct)}%` : "—"}
+              {" · "}Lost sales: {cumulativeLost}
+            </p>
           </section>
         </div>
 

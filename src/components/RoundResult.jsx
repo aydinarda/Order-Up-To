@@ -16,6 +16,8 @@ function RoundResult({ result }) {
   }
 
   const demandValue = result.realizedDemand ?? result.demand;
+  const isExpress = result.mode === "express";
+  const vehicleWord = isExpress ? "van" : "truck";
 
   return (
     <section className="card result-card">
@@ -48,7 +50,10 @@ function RoundResult({ result }) {
         <p>Order placed (q)</p>
         <strong>{result.orderQty}</strong>
 
-        <p>Trucks</p>
+        <p>Delivery</p>
+        <strong>{isExpress ? "🚐 Express van" : "🚚 Consolidated"}</strong>
+
+        <p>{isExpress ? "Vans" : "Trucks"}</p>
         <strong>
           {result.trucks}
           {result.truckFillPct !== null && result.trucks > 0
@@ -65,7 +70,7 @@ function RoundResult({ result }) {
         <p>Holding cost</p>
         <strong>{toCurrency(result.holdingCost)}</strong>
 
-        <p>Truck cost</p>
+        <p>Transport cost</p>
         <strong>{toCurrency(result.truckCost)}</strong>
 
         <p>Transport CO₂</p>

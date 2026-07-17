@@ -45,6 +45,7 @@ create table if not exists orders (
   player_id text not null,
   nickname text not null,
   order_qty int not null,
+  delivery_mode text,
   arrival int,
   sold int,
   lost int,

@@ -1,6 +1,21 @@
 # Black Sea Gold: The Hazelnut Supply Challenge
 
-Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game, themed around a hazelnut cooperative distributing to a city hub. Students decide an order quantity each round against a shared randomized demand, with carry-over inventory, a delivery lead time (with an admin-configurable chance of a shared shipping delay event), truck-based transport CO₂ and storage CO₂; an admin controls the game flow round by round. Round 1 is a priming round: the warehouse starts empty and players place an opening order that arrives with a 1-round lead time. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂.
+Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game, themed around a hazelnut cooperative distributing to a city hub. Students decide an order quantity **and a delivery mode** each round against a shared randomized demand, with carry-over inventory, a delivery lead time (with an admin-configurable chance of a shared shipping delay event), transport CO₂ and storage CO₂; an admin controls the game flow round by round. Round 1 is a priming round: the warehouse starts empty and players place an opening order that arrives with a 1-round lead time. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂, and profit, service level, fleet utilisation and lost sales are shown as separate KPIs.
+
+### Delivery modes (the core trade-off)
+
+Each order ships one of two ways:
+
+| Mode | Capacity | Lead time | Cost & CO₂ | When to use |
+|---|---|---|---|---|
+| **Consolidated truck** | Large (default 100 u) | Full configured `L` | Cheaper + lower CO₂ per vehicle | Default; efficient when you can plan ahead |
+| **Express van** | Small (default 40 u) | Always **1 round** | Higher cost **and** higher CO₂ per kg | Rescue an imminent stockout — sparingly |
+
+Express always arrives the next round, but its smaller, pricier, dirtier vans make it strictly worse per kg — so leaning on it erodes both profit and the sustainability KPI.
+
+### Admin announcements
+
+The admin can broadcast a free-text note to every player (e.g. "Bakeries are ramping up for the holidays — expect higher demand") and then adjust the demand distribution or economy config to match. This drives the storyline's narrative beats (bakery rush, road delays) verbally, class-paced, without scripted on-screen events.
 
 **Stack:** React + Vite (frontend) · Express + WebSocket (backend) · Supabase PostgreSQL (optional persistence)
 

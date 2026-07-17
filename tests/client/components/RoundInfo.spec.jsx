@@ -11,6 +11,9 @@ const config = {
   truckCapacity: 100,
   fixedCostPerTruck: 50,
   co2PerTruck: 100,
+  expressCapacity: 40,
+  expressFixedCost: 120,
+  expressCo2: 250,
   co2PerUnitHeld: 0.5
 };
 
@@ -21,14 +24,19 @@ describe("RoundInfo", () => {
     expect(screen.getByRole("heading", { name: "Round 2" })).toBeInTheDocument();
   });
 
-  it("renders the economy, logistics and CO2 config chips", () => {
+  it("renders the economy, delivery-mode and storage config chips", () => {
     render(<RoundInfo round={round} totalRounds={12} config={config} />);
     expect(screen.getByText("Economics")).toBeInTheDocument();
-    expect(screen.getByText("Logistics")).toBeInTheDocument();
-    expect(screen.getByText("CO₂")).toBeInTheDocument();
+    expect(screen.getByText("Consolidated truck")).toBeInTheDocument();
+    expect(screen.getByText("Express van")).toBeInTheDocument();
+    expect(screen.getByText("Storage & risk")).toBeInTheDocument();
     expect(screen.getByText("$40")).toBeInTheDocument();
     expect(screen.getByText("2 rounds")).toBeInTheDocument();
+    // Consolidated CO₂ chip value.
     expect(screen.getByText("100 kg")).toBeInTheDocument();
+    // Express van economy is surfaced too.
+    expect(screen.getByText("$120")).toBeInTheDocument();
+    expect(screen.getByText("250 kg")).toBeInTheDocument();
   });
 
   it("describes a uniform demand distribution", () => {

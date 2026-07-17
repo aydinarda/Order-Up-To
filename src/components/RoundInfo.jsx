@@ -30,21 +30,30 @@ function ConfigDetail({ config }) {
         ]}
       />
       <ChipGroup
-        title="Logistics"
+        title="Consolidated truck"
         chips={[
           { label: "Lead time", value: `${config.leadTime} rounds` },
-          { label: "Truck cap.", value: `${config.truckCapacity} u` },
-          { label: "Truck cost", value: `$${config.fixedCostPerTruck}` },
-          ...(config.delayProbability > 0
-            ? [{ label: "Delay risk", value: `${Math.round(config.delayProbability * 100)}%/round` }]
-            : [])
+          { label: "Capacity", value: `${config.truckCapacity} u` },
+          { label: "Cost", value: `$${config.fixedCostPerTruck}` },
+          { label: "CO₂", value: `${config.co2PerTruck} kg` }
         ]}
       />
       <ChipGroup
-        title="CO₂"
+        title="Express van"
         chips={[
-          { label: "Per truck", value: `${config.co2PerTruck} kg` },
-          { label: "Per unit held", value: `${config.co2PerUnitHeld} kg` }
+          { label: "Lead time", value: "1 round" },
+          { label: "Capacity", value: `${config.expressCapacity} u` },
+          { label: "Cost", value: `$${config.expressFixedCost}` },
+          { label: "CO₂", value: `${config.expressCo2} kg` }
+        ]}
+      />
+      <ChipGroup
+        title="Storage & risk"
+        chips={[
+          { label: "CO₂/unit held", value: `${config.co2PerUnitHeld} kg` },
+          ...(config.delayProbability > 0
+            ? [{ label: "Delay risk", value: `${Math.round(config.delayProbability * 100)}%/round` }]
+            : [])
         ]}
       />
     </div>

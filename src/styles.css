@@ -827,3 +827,92 @@ button.danger:hover {
   color: #6b4f16;
   margin: 6px 0 10px;
 }
+
+/* ---- Delivery mode selector ---- */
+.delivery-modes {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.delivery-mode {
+  flex: 1;
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.delivery-mode:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.delivery-mode.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 95, 46, 0.25);
+}
+
+.delivery-mode:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.delivery-mode-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.delivery-mode-detail {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* ---- Admin announcement + banner ---- */
+.announce-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.announce-control textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+}
+
+.announcement-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fff3d6;
+  border: 1px solid #e6b955;
+  border-left: 4px solid var(--accent);
+}
+
+.announcement-icon {
+  font-size: 1.4rem;
+}
+
+.announcement-text {
+  margin: 0;
+  font-weight: 600;
+  color: #6b4f16;
+}
+
+.score-kpi-line {
+  margin-top: 4px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}

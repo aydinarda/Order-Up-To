@@ -244,3 +244,84 @@ test("delayProbability=0 (default) never triggers a delay", async () => {
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.ok(gs.body.player.history.every((round) => round.delayed === false));
 });
+
+// ── Delivery mode (consolidated vs express) ─────────────────────────────────
+test("set-config accepts express van economy fields", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken } = await createGame(app);
+
+  const res = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, expressCapacity: 30, expressFixedCost: 150, expressCo2: 300 });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.config.expressCapacity, 30);
+  assert.equal(res.body.config.expressFixedCost, 150);
+  assert.equal(res.body.config.expressCo2, 300);
+});
+
+test("submit-order rejects an unknown delivery mode", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app);
+  await request(app).post("/start-round").send({ gameId, adminToken });
+
+  const res = await request(app)
+    .post("/submit-order")
+    .send({ gameId, playerId, orderQty: 100, mode: "teleport" });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /mode/i);
+});
+
+test("an express order arrives the round after it is placed", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app, {
+    handsPerTur: 4,
+    config: { leadTime: 3 }
+  });
+
+  // Priming round: no express; place a consolidated opening order.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  // Round 2: express order of 40 (one van). Despite leadTime 3, it arrives round 3.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 40, mode: "express" });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
+  const end = await request(app).post("/end-round").send({ gameId, adminToken });
+
+  const gs = await request(app).get("/game-state").query({ gameId, playerId });
+  const round3 = gs.body.player.history[2];
+  assert.equal(round3.arrival, 40); // express landed one round after placement
+  assert.equal(gs.body.player.history[1].mode, "express");
+});
+
+// ── Admin announcements ─────────────────────────────────────────────────────
+test("announce broadcasts a message and clears on empty", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app);
+
+  const sent = await request(app)
+    .post("/announce")
+    .send({ gameId, adminToken, message: "Bakery rush incoming" });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.body.announcement.message, "Bakery rush incoming");
+
+  const gs = await request(app).get("/game-state").query({ gameId, playerId });
+  assert.equal(gs.body.announcement.message, "Bakery rush incoming");
+
+  const cleared = await request(app).post("/announce").send({ gameId, adminToken, message: "" });
+  assert.equal(cleared.body.announcement, null);
+});
+
+test("announce requires a valid admin token", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId } = await createGame(app);
+
+  const res = await request(app).post("/announce").send({ gameId, adminToken: "nope", message: "hi" });
+  assert.equal(res.status, 403);
+});

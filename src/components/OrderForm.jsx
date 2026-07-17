@@ -5,18 +5,26 @@ import { useState } from "react";
 // already on the way) — but the game does not do that subtraction for them.
 // On the priming round (round 1) the opening order arrives in 1 round instead
 // of the configured lead time, and there is no demand.
+//
+// The player also picks a delivery mode: the consolidated truck (cheaper, lower
+// CO2, full lead time) or the express van (arrives next round, but smaller,
+// pricier and dirtier per kg — for rescuing a stockout).
 function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, priming = false }) {
   const [quantity, setQuantity] = useState("");
+  const [mode, setMode] = useState("consolidated");
   const [error, setError] = useState("");
 
   const inventoryPosition = onHand + inTransit;
   const parsed = Number(quantity);
   const isValid = quantity !== "" && Number.isInteger(parsed) && parsed >= 0;
-  const truckCapacity = config?.truckCapacity || 0;
-  const trucks =
-    isValid && parsed > 0 && truckCapacity > 0 ? Math.ceil(parsed / truckCapacity) : 0;
-  const fill = trucks > 0 ? Math.round((parsed / (trucks * truckCapacity)) * 100) : null;
-  const arrivalRounds = priming ? 1 : config?.leadTime ?? 0;
+
+  const isExpress = mode === "express";
+  const capacity = (isExpress ? config?.expressCapacity : config?.truckCapacity) || 0;
+  const arrivalRounds = isExpress ? 1 : priming ? 1 : config?.leadTime ?? 0;
+
+  const vehicles = isValid && parsed > 0 && capacity > 0 ? Math.ceil(parsed / capacity) : 0;
+  const fill = vehicles > 0 ? Math.round((parsed / (vehicles * capacity)) * 100) : null;
+  const vehicleWord = isExpress ? "van" : "truck";
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -27,8 +35,29 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
     }
 
     setError("");
-    onSubmit(parsed);
+    onSubmit(parsed, mode);
   };
+
+  const modeOptions = config
+    ? [
+        {
+          id: "consolidated",
+          label: "Consolidated truck",
+          cap: config.truckCapacity,
+          cost: config.fixedCostPerTruck,
+          co2: config.co2PerTruck,
+          lead: priming ? 1 : config.leadTime
+        },
+        {
+          id: "express",
+          label: "Express van",
+          cap: config.expressCapacity,
+          cost: config.expressFixedCost,
+          co2: config.expressCo2,
+          lead: 1
+        }
+      ]
+    : [];
 
   return (
     <section className="card">
@@ -56,6 +85,31 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         </div>
       </div>
 
+      {modeOptions.length > 0 && (
+        <div className="delivery-modes" role="radiogroup" aria-label="Delivery mode">
+          {modeOptions.map((opt) => (
+            <button
+              type="button"
+              key={opt.id}
+              role="radio"
+              aria-checked={mode === opt.id}
+              className={`delivery-mode ${mode === opt.id ? "selected" : ""}`}
+              onClick={() => setMode(opt.id)}
+              disabled={disabled}
+            >
+              <span className="delivery-mode-name">{opt.label}</span>
+              <span className="delivery-mode-detail">
+                {opt.cap} u/{opt.id === "express" ? "van" : "truck"} · arrives in{" "}
+                {opt.lead} round{opt.lead === 1 ? "" : "s"}
+              </span>
+              <span className="delivery-mode-detail">
+                ${opt.cost} · {opt.co2} kg CO₂ each
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="order-form">
         <label htmlFor="order-qty">Order quantity (kg)</label>
         <input
@@ -72,7 +126,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         {isValid && (
           <p className="order-preview">
             {parsed > 0
-              ? `${trucks} truck${trucks === 1 ? "" : "s"}` +
+              ? `${vehicles} ${vehicleWord}${vehicles === 1 ? "" : "s"}` +
                 (fill !== null ? ` (${fill}% full)` : "") +
                 ` — arrives in ${arrivalRounds} round${arrivalRounds === 1 ? "" : "s"}`
               : priming

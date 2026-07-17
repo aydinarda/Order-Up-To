@@ -31,10 +31,10 @@ export function startGame({ nickname, adminKey, handsPerTur, config }) {
   });
 }
 
-export function submitOrder({ gameId, playerId, orderQty }) {
+export function submitOrder({ gameId, playerId, orderQty, mode }) {
   return request("/submit-order", {
     method: "POST",
-    body: JSON.stringify({ gameId, playerId, orderQty })
+    body: JSON.stringify({ gameId, playerId, orderQty, mode })
   });
 }
 
@@ -76,6 +76,13 @@ export function setConfig(params) {
   return request("/set-config", {
     method: "POST",
     body: JSON.stringify(params)
+  });
+}
+
+export function announce({ gameId, adminToken, message }) {
+  return request("/announce", {
+    method: "POST",
+    body: JSON.stringify({ gameId, adminToken, message })
   });
 }
 
