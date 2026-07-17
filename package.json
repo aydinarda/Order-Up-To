@@ -11,7 +11,8 @@
     "test:ui": "vitest run",
     "test:watch": "vitest",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "analyze:express": "node scripts/express-analysis.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
