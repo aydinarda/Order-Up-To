@@ -84,7 +84,8 @@ function TruckSweep() {
           delay: (i / layer.count) * layer.delaySpread + Math.random() * 0.12,
           duration: layer.durMin + Math.random() * layer.durRange,
           zIndex: Math.round(scale * 100),
-          label: false,
+          // Whole fleet carries the Black Sea Gold wordmark on a gold stripe.
+          label: true,
           smoke: makeSmoke(layer.smoke, layer.big)
         });
       }
