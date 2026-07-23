@@ -313,7 +313,7 @@ test("submit-order rejects an unknown delivery mode", async () => {
 });
 
 // Back-compat: an old client sends a single quantity plus mode:"express".
-test("an express order arrives the round after it is placed", async () => {
+test("an express order arrives within the round it is placed", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, playerId } = await createGame(app, {
     handsPerTur: 4,
@@ -325,19 +325,16 @@ test("an express order arrives the round after it is placed", async () => {
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
-  // Round 2: express order of 40 (one van). Despite leadTime 3, it arrives round 3.
+  // Round 2: express order of 40 (one van). Despite leadTime 3, it lands in
+  // round 2 itself and can serve round 2's demand.
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 40, mode: "express" });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
-  await request(app).post("/start-round").send({ gameId, adminToken });
-  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
-  const end = await request(app).post("/end-round").send({ gameId, adminToken });
-
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
-  const round3 = gs.body.player.history[2];
-  assert.equal(round3.arrival, 40); // express landed one round after placement
-  assert.equal(gs.body.player.history[1].mode, "express");
+  const round2 = gs.body.player.history[1];
+  assert.equal(round2.mode, "express");
+  assert.equal(round2.arrival, 40); // landed the same round it was ordered
 });
 
 test("both vehicles can be used in the same round: split arrivals, summed cost and CO2", async () => {
@@ -353,7 +350,7 @@ test("both vehicles can be used in the same round: split arrivals, summed cost a
   await request(app).post("/end-round").send({ gameId, adminToken });
 
   // Round 2: 250 kg by consolidated truck (3 trucks, arrives round 4) AND
-  // 90 kg by express van (3 vans, arrives round 3) in the SAME submission.
+  // 90 kg by express van (3 vans, landing within round 2) in the SAME submission.
   await request(app).post("/start-round").send({ gameId, adminToken });
   const submit = await request(app)
     .post("/submit-order")
@@ -367,6 +364,9 @@ test("both vehicles can be used in the same round: split arrivals, summed cost a
   const mixedRound = gs.body.player.history[1];
   const cfg = gs.body.config;
 
+  // The express 90 kg landed within the round it was ordered.
+  assert.equal(mixedRound.arrival, 90);
+
   // Cost and CO2 are the sums of both fleets (defaults: 3×$50 + 3×$120,
   // 3×100 kg + 3×250 kg), and the purchase covers the combined 340 kg.
   assert.equal(mixedRound.mode, "mixed");
@@ -377,13 +377,13 @@ test("both vehicles can be used in the same round: split arrivals, summed cost a
   assert.equal(mixedRound.transportCo2, 3 * cfg.co2PerTruck + 3 * cfg.expressCo2);
   assert.equal(mixedRound.purchaseCost, 340 * cfg.unitCost);
 
-  // Round 3: exactly the express 90 kg lands.
+  // Round 3: nothing due — the consolidated leg is still in transit.
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
   gs = await request(app).get("/game-state").query({ gameId, playerId });
-  assert.equal(gs.body.player.history[2].arrival, 90);
+  assert.equal(gs.body.player.history[2].arrival, 0);
 
   // Round 4: the consolidated 250 kg lands after the full lead time.
   await request(app).post("/start-round").send({ gameId, adminToken });

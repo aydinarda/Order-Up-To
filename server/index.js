@@ -80,8 +80,9 @@ const CONFIG_FIELDS = {
   fixedCostPerTruck: { integer: false, min: 0 },
   co2PerTruck: { integer: false, min: 0 },
   co2PerUnitHeld: { integer: false, min: 0 },
-  // Express van economics. Not preGameOnly — express always arrives in 1 round
-  // regardless of these, so changing them never corrupts an in-flight pipeline.
+  // Express van economics. Not preGameOnly — express arrives within the same
+  // round regardless of these (it never enters the pipeline), so changing them
+  // never corrupts an in-flight pipeline.
   expressCapacity: { integer: true, min: 1 },
   expressFixedCost: { integer: false, min: 0 },
   expressCo2: { integer: false, min: 0 },
@@ -670,8 +671,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       const orderQty = order ? order.orderQty : player.lastQ ?? 0;
       const expressQty = order ? order.expressQty : player.lastExpressQty ?? 0;
       // The priming opening order uses a 1-round lead time; otherwise the
-      // consolidated leg uses the configured L. The express leg always arrives
-      // next round (handled inside advancePeriod).
+      // consolidated leg uses the configured L. The express leg arrives within
+      // the same round (handled inside advancePeriod).
       const orderLeadTime = isPriming ? 1 : activeGame.config.leadTime;
 
       const { nextState, result } = advancePeriod(

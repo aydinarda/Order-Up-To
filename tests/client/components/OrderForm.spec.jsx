@@ -52,9 +52,9 @@ describe("OrderForm", () => {
     await userEvent.type(screen.getByLabelText(/consolidated truck quantity/i), "250");
     expect(screen.getByText(/3 trucks.*— arrives in 2 rounds/i)).toBeInTheDocument();
 
-    // 90 express -> 3 vans arriving next round.
+    // 90 express -> 3 vans landing within this round.
     await userEvent.type(screen.getByLabelText(/express van quantity/i), "90");
-    expect(screen.getByText(/3 vans.*— arrives in 1 round/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 vans.*— arrives this round/i)).toBeInTheDocument();
 
     expect(screen.getByText(/total order: 340 kg/i)).toBeInTheDocument();
   });

@@ -37,15 +37,16 @@
 // can split the order across BOTH vehicles at once:
 //   - "consolidated" truck — big capacity, cheaper + lower CO2 per vehicle, but
 //     the full configured lead time L; and/or
-//   - "express" van — always arrives in EXPRESS_LEAD_TIME (1 round) to rescue a
-//     stockout, but smaller capacity and strictly higher cost + CO2 per vehicle,
-//     so it is both more expensive and dirtier per kg. Use it sparingly.
+//   - "express" van — arrives the SAME round it is ordered, so it can rescue
+//     this round's demand from a stockout, but smaller capacity and strictly
+//     higher cost + CO2 per vehicle: more expensive and dirtier per kg.
 // The split only changes vehicle economics and arrival timing; everything else
 // (holding, storage CO2, lost sales) is identical.
-
-// Express always arrives the round after it's placed. Not admin-configurable —
-// the whole point of express is a fixed, fast lead time.
-export const EXPRESS_LEAD_TIME = 1;
+//
+// Express never touches the pipeline: it lands immediately — even during a
+// shipping-delay event, which freezes only the consolidated pipeline. That
+// guaranteed immediacy is exactly what its premium buys. Not
+// admin-configurable.
 
 export const DEFAULT_CONFIG = {
   leadTime: 2,
@@ -74,14 +75,15 @@ export function createInitialState(config = DEFAULT_CONFIG) {
 // options:
 //   leadTime — periods until the CONSOLIDATED part of this order arrives
 //              (defaults to config.leadTime; the round-1 opening order passes
-//              1). The express part always arrives in EXPRESS_LEAD_TIME.
+//              1). The express part always arrives within the same round.
 //   expressQty — units additionally shipped by express van this round (default
 //                0). Both vehicles can be used in the same round: `order` rides
 //                the consolidated truck, `expressQty` rides the express van.
 //   priming — round 1: no demand is realized, no sales, no lost sales
-//   delayed — a shared shipping-delay event hit this round: nothing arrives,
-//             nothing already in the pipeline advances, and this round's
-//             orders are queued one slot deeper to compensate
+//   delayed — a shared shipping-delay event hit this round: nothing arrives
+//             from the pipeline, nothing already in it advances, and this
+//             round's consolidated order is queued one slot deeper to
+//             compensate. Express is unaffected — it still lands this round.
 export function advancePeriod(state, config, demand, order, options = {}) {
   const orderLeadTime = options.leadTime ?? config.leadTime;
   const priming = options.priming ?? false;
@@ -91,7 +93,10 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   const expressQty = Math.max(0, options.expressQty ?? 0);
   const orderQty = consolidatedQty + expressQty;
 
-  const arrival = delayed ? 0 : state.pipeline[0] ?? 0;
+  // Express lands immediately — it can serve THIS round's demand. The delay
+  // event freezes only the consolidated pipeline, never the direct van.
+  const pipelineArrival = delayed ? 0 : state.pipeline[0] ?? 0;
+  const arrival = pipelineArrival + expressQty;
   const available = state.onHand + arrival;
 
   const sold = priming ? 0 : Math.min(available, demand);
@@ -101,12 +106,11 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   const trucks = consolidatedQty > 0 ? Math.ceil(consolidatedQty / config.truckCapacity) : 0;
   const vans = expressQty > 0 ? Math.ceil(expressQty / config.expressCapacity) : 0;
 
-  // On a normal round, the pipeline shifts forward by one; the consolidated
-  // order lands at (leadTime - 1) and the express order at slot 0 (next round).
-  // On a delayed round, nothing shifts (everything already in transit —
-  // including what was due this round — just waits one more round), and both
-  // orders land one slot deeper so each still needs exactly its own lead time
-  // of normal rounds once the freeze lifts.
+  // On a normal round, the pipeline shifts forward by one and the consolidated
+  // order lands at (leadTime - 1). On a delayed round, nothing shifts
+  // (everything already in transit — including what was due this round — just
+  // waits one more round), and the order lands one slot deeper so it still
+  // needs exactly `orderLeadTime` normal rounds once the freeze lifts.
   //
   // The admin can raise leadTime mid-game, so the pipeline may be shorter than
   // this order now needs — grow it with empty slots (never truncate: orders
@@ -117,10 +121,8 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   }
   const consolidatedSlot = delayed ? orderLeadTime : Math.max(orderLeadTime - 1, 0);
   shifted[consolidatedSlot] += consolidatedQty;
-  const expressSlot = delayed ? EXPRESS_LEAD_TIME : EXPRESS_LEAD_TIME - 1;
-  shifted[expressSlot] += expressQty;
 
-  const inTransitRemaining = shifted.reduce((sum, qty) => sum + qty, 0) - orderQty;
+  const inTransitRemaining = shifted.reduce((sum, qty) => sum + qty, 0) - consolidatedQty;
   const inventoryPosition = onHandEnd + inTransitRemaining;
 
   const revenue = sold * config.price;
@@ -153,7 +155,7 @@ export function advancePeriod(state, config, demand, order, options = {}) {
       sold,
       lost,
       onHandEnd,
-      inTransitEnd: inTransitRemaining + orderQty,
+      inTransitEnd: inTransitRemaining + consolidatedQty,
       inventoryPosition,
       orderQty,
       consolidatedQty,

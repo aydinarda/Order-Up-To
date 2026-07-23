@@ -1,10 +1,11 @@
 // Express-van decision analysis — the INDIVIDUAL player's call, not a class sweep.
 //
-// The in-game choice is atomic and faithful to submit-order (one mode per round):
-// "I need to restock ~q this round — send it by consolidated truck (cheap, arrives
-// in L) or by express van (dear + dirty, arrives next round)?" We simulate one
-// player from a given starting situation down two branches that differ ONLY in the
-// round-0 delivery mode, on the SAME demand draws, then compare (profit, CO2, lost).
+// The in-game choice per round is how to split the order across the two legs;
+// here we compare the pure strategies: "I need to restock ~q this round — send
+// it by consolidated truck (cheap, arrives in L) or by express van (dear +
+// dirty, lands within the same round)?" We simulate one player from a given
+// starting situation down two branches that differ ONLY in the round-0 vehicle,
+// on the SAME demand draws, then compare (profit, CO2, lost).
 //
 // Verdict uses the exact leaderboard dominance rule (maximize profit, minimize CO2):
 //   - express DOMINATED  → strictly worse profit AND CO2 → a bad call (waste).

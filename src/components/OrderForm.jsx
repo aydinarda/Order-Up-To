@@ -8,8 +8,8 @@ import { useState } from "react";
 //
 // Both delivery legs can be used in the same round: the consolidated truck
 // (cheaper, lower CO2, full lead time) carries one quantity, and the express
-// van (arrives next round, but smaller, pricier and dirtier per kg — for
-// rescuing a stockout) carries another. Either can be zero.
+// van (arrives the same round — it can still serve this round's demand — but
+// smaller, pricier and dirtier per kg) carries another. Either can be zero.
 function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, priming = false }) {
   const [truckQty, setTruckQty] = useState("");
   const [expressQty, setExpressQty] = useState("");
@@ -54,7 +54,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
           cap: config.expressCapacity,
           cost: config.expressFixedCost,
           co2: config.expressCo2,
-          lead: 1,
+          lead: 0, // same-round arrival
           qty: parsedExpress,
           rawValue: expressQty,
           onChange: setExpressQty
@@ -64,7 +64,11 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         return {
           ...leg,
           vehicles,
-          fill: vehicles > 0 ? Math.round((leg.qty / (vehicles * leg.cap)) * 100) : null
+          fill: vehicles > 0 ? Math.round((leg.qty / (vehicles * leg.cap)) * 100) : null,
+          arrivalText:
+            leg.lead === 0
+              ? "arrives this round"
+              : `arrives in ${leg.lead} round${leg.lead === 1 ? "" : "s"}`
         };
       })
     : [];
@@ -120,7 +124,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
                   <span className={`delivery-mode-tag tag-${leg.id}`}>{leg.tag}</span>
                 </span>
                 <span className="delivery-mode-detail">
-                  {leg.cap} u/{leg.word} · arrives in {leg.lead} round{leg.lead === 1 ? "" : "s"}
+                  {leg.cap} u/{leg.word} · {leg.arrivalText}
                 </span>
                 <span className="delivery-mode-detail">
                   ${leg.cost} · {leg.co2} kg CO₂ each
@@ -142,8 +146,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
                   <span className="delivery-mode-detail">
                     {leg.vehicles} {leg.word}
                     {leg.vehicles === 1 ? "" : "s"}
-                    {leg.fill !== null ? ` (${leg.fill}% full)` : ""} — arrives in {leg.lead}{" "}
-                    round{leg.lead === 1 ? "" : "s"}
+                    {leg.fill !== null ? ` (${leg.fill}% full)` : ""} — {leg.arrivalText}
                   </span>
                 )}
               </div>

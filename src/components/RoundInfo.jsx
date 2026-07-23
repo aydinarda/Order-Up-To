@@ -41,7 +41,7 @@ function ConfigDetail({ config }) {
       <ChipGroup
         title="Express van"
         chips={[
-          { label: "Lead time", value: "1 round" },
+          { label: "Lead time", value: "Same round" },
           { label: "Capacity", value: `${config.expressCapacity} u` },
           { label: "Cost", value: `$${config.expressFixedCost}` },
           { label: "CO₂", value: `${config.expressCo2} kg` }

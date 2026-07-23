@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import {
   advancePeriod,
   createInitialState,
-  DEFAULT_CONFIG,
-  EXPRESS_LEAD_TIME
+  DEFAULT_CONFIG
 } from "../../../server/utils/inventory.js";
 
 const config = { ...DEFAULT_CONFIG, leadTime: 2 };
@@ -256,9 +255,10 @@ test("lowering leadTime mid-game lets a new order overtake the pipeline's extra 
 });
 
 // ── Delivery legs: consolidated and/or express in the same round ───────────
-// Express uses smaller vans that each cost more and emit more, and it always
-// arrives in EXPRESS_LEAD_TIME (1 round). The player can ship BOTH legs in
-// one round: `order` rides the truck, options.expressQty rides the van.
+// Express uses smaller vans that each cost more and emit more, and it arrives
+// the SAME round it is ordered (it never enters the pipeline). The player can
+// ship BOTH legs in one round: `order` rides the truck, options.expressQty
+// rides the van.
 
 test("an order without expressQty is a pure consolidated round", () => {
   const state = createInitialState(config);
@@ -307,22 +307,24 @@ test("mixed round: transport CO2 is the sum of the truck and van fleets", () => 
   const state = createInitialState(config);
   const { result } = advancePeriod(state, config, 0, 250, { expressQty: 90 });
   assert.equal(result.transportCo2, 3 * config.co2PerTruck + 3 * config.expressCo2);
-  // Storage CO2 is unaffected by the split (empty warehouse here).
-  assert.equal(result.storageCo2, 0);
-  assert.equal(result.co2, result.transportCo2);
+  // The express 90 landed this round and (with zero demand) is now held, so
+  // storage CO2 covers it; the consolidated 250 is still in transit.
+  assert.equal(result.storageCo2, 90 * config.co2PerUnitHeld);
+  assert.equal(result.co2, result.transportCo2 + result.storageCo2);
 });
 
-test("mixed round: express leg arrives next round, consolidated leg after leadTime rounds", () => {
+test("mixed round: express leg arrives this round, consolidated leg after leadTime rounds", () => {
   let state = createInitialState(config); // leadTime 2
-  // 200 by truck (arrives in 2 rounds), 80 by van (arrives in 1 round).
+  // 200 by truck (arrives in 2 rounds), 80 by van (lands immediately).
   let step = advancePeriod(state, config, 0, 200, { expressQty: 80 });
-  assert.deepEqual(step.nextState.pipeline, [80, 200, 0]);
+  assert.equal(step.result.arrival, 80); // the express quantity, this round
+  assert.equal(step.nextState.onHand, 80); // zero demand -> held
+  assert.deepEqual(step.nextState.pipeline, [0, 200, 0]); // only the truck in transit
   state = step.nextState;
 
-  // Next round: exactly the express quantity lands.
+  // Next round: nothing due yet.
   step = advancePeriod(state, config, 0, 0);
-  assert.equal(step.result.arrival, 80);
-  assert.equal(step.nextState.onHand, 80);
+  assert.equal(step.result.arrival, 0);
   state = step.nextState;
 
   // The round after: the consolidated quantity lands, completing the order.
@@ -331,25 +333,27 @@ test("mixed round: express leg arrives next round, consolidated leg after leadTi
   assert.equal(step.nextState.onHand, 280);
 });
 
-test("express leg arrives in EXPRESS_LEAD_TIME even when config.leadTime is longer", () => {
+test("express serves this round's demand — a same-round stockout rescue", () => {
   const longer = { ...config, leadTime: 4 };
-  let state = createInitialState(longer);
-  let step = advancePeriod(state, longer, 0, 0, { expressQty: 40 });
-  assert.equal(step.nextState.pipeline[EXPRESS_LEAD_TIME - 1], 40); // slot 0 -> next round
-  state = step.nextState;
-
-  step = advancePeriod(state, longer, 0, 0);
-  assert.equal(step.result.arrival, 40);
+  const state = createInitialState(longer); // empty warehouse, nothing inbound
+  // Demand 30 hits an empty hub; 40 by express van covers it immediately.
+  const { result, nextState } = advancePeriod(state, longer, 30, 0, { expressQty: 40 });
+  assert.equal(result.arrival, 40);
+  assert.equal(result.sold, 30);
+  assert.equal(result.lost, 0);
+  assert.equal(nextState.onHand, 10); // the unsold remainder is held
 });
 
-test("on a delayed round both legs queue one slot deeper", () => {
+test("a delayed round freezes the pipeline but not the express van", () => {
   const state = createInitialState(config); // pipeline [0,0,0], leadTime 2
-  const { nextState } = advancePeriod(state, config, 0, 100, {
+  const { result, nextState } = advancePeriod(state, config, 0, 100, {
     expressQty: 40,
     delayed: true
   });
-  // Express: slot EXPRESS_LEAD_TIME (1); consolidated: slot leadTime (2).
-  assert.deepEqual(nextState.pipeline, [0, 40, 100]);
+  // Consolidated queues one slot deeper (slot leadTime = 2); express landed.
+  assert.deepEqual(nextState.pipeline, [0, 0, 100]);
+  assert.equal(result.arrival, 40);
+  assert.equal(nextState.onHand, 40);
 });
 
 test("capacityUnits and fill reflect the combined dispatched fleet", () => {
