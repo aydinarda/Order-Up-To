@@ -21,11 +21,11 @@ function TruckArt({ label = false }) {
         <line x1="82" y1="24" x2="82" y2="88" />
         <line x1="119" y1="24" x2="119" y2="88" />
       </g>
-      {/* accent stripe */}
-      <rect x="12" y="46" width="132" height="16" fill="var(--accent)" />
+      {/* accent stripe — gold when it carries the Black Sea Gold wordmark */}
+      <rect x="12" y="46" width="132" height="16" fill={label ? "var(--gold)" : "var(--accent)"} />
       {label && (
-        <text x="78" y="59" textAnchor="middle" fontSize="12" fontWeight="700" fill="#fff" letterSpacing="0.5">
-          ISLAND MARKET
+        <text x="78" y="59" textAnchor="middle" fontSize="11" fontWeight="700" fill="#fff" letterSpacing="0.5">
+          BLACK SEA GOLD
         </text>
       )}
       {/* cab */}
