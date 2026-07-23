@@ -16,8 +16,13 @@ function RoundResult({ result }) {
   }
 
   const demandValue = result.realizedDemand ?? result.demand;
-  const isExpress = result.mode === "express";
-  const vehicleWord = isExpress ? "van" : "truck";
+  // Older results carry a single mode; newer ones split the order across both
+  // vehicles (either leg may be zero).
+  const consolidatedQty =
+    result.consolidatedQty ?? (result.mode === "express" ? 0 : result.orderQty);
+  const expressQty = result.expressQty ?? (result.mode === "express" ? result.orderQty : 0);
+  const trucks = result.consolidatedQty !== undefined || result.mode !== "express" ? result.trucks : 0;
+  const vans = result.vans ?? (result.mode === "express" ? result.trucks : 0);
 
   return (
     <section className="card result-card">
@@ -50,15 +55,23 @@ function RoundResult({ result }) {
         <p>Order placed (q)</p>
         <strong>{result.orderQty}</strong>
 
-        <p>Delivery</p>
-        <strong>{isExpress ? "🚐 Express van" : "🚚 Consolidated"}</strong>
-
-        <p>{isExpress ? "Vans" : "Trucks"}</p>
+        <p>🚚 Consolidated</p>
         <strong>
-          {result.trucks}
-          {result.truckFillPct !== null && result.trucks > 0
-            ? ` (${Math.round(result.truckFillPct)}% full)`
-            : ""}
+          {consolidatedQty > 0
+            ? `${consolidatedQty} kg · ${trucks} truck${trucks === 1 ? "" : "s"}`
+            : "—"}
+        </strong>
+
+        <p>🚐 Express</p>
+        <strong>
+          {expressQty > 0 ? `${expressQty} kg · ${vans} van${vans === 1 ? "" : "s"}` : "—"}
+        </strong>
+
+        <p>Fleet fill</p>
+        <strong>
+          {result.truckFillPct !== null && result.orderQty > 0
+            ? `${Math.round(result.truckFillPct)}% full`
+            : "—"}
         </strong>
 
         <p>Revenue</p>

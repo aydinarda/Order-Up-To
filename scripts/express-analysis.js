@@ -18,11 +18,7 @@
 // Usage: node scripts/express-analysis.js [--reps 800] [--horizon 0=auto]
 // The engine and dominance rule are the SAME modules the live game uses.
 
-import {
-  advancePeriod,
-  DEFAULT_CONFIG,
-  EXPRESS_LEAD_TIME
-} from "../server/utils/inventory.js";
+import { advancePeriod, DEFAULT_CONFIG } from "../server/utils/inventory.js";
 import { sampleDemand } from "../server/utils/demand.js";
 import { createRng } from "../server/utils/rng.js";
 
@@ -65,9 +61,13 @@ function runBranch({ config, L, S, onHand, round0Mode, horizon, seed }) {
     const demand = sampleDemand(distribution, rand);
     const ip = state.onHand + state.pipeline.reduce((s, q) => s + q, 0);
     const q = Math.max(0, S - ip);
-    const mode = r === 0 ? round0Mode : "consolidated";
-    const leadTime = mode === "express" ? EXPRESS_LEAD_TIME : L;
-    const { nextState, result } = advancePeriod(state, config, demand, q, { mode, leadTime });
+    // Round 0 ships the whole reorder on the branch's vehicle; later rounds
+    // always use the consolidated truck.
+    const useExpress = r === 0 && round0Mode === "express";
+    const { nextState, result } = advancePeriod(state, config, demand, useExpress ? 0 : q, {
+      leadTime: L,
+      expressQty: useExpress ? q : 0
+    });
     state = nextState;
     t.profit += result.profit;
     t.co2 += result.co2;

@@ -31,10 +31,10 @@ export function startGame({ nickname, adminKey, handsPerTur, config }) {
   });
 }
 
-export function submitOrder({ gameId, playerId, orderQty, mode }) {
+export function submitOrder({ gameId, playerId, orderQty, expressQty }) {
   return request("/submit-order", {
     method: "POST",
-    body: JSON.stringify({ gameId, playerId, orderQty, mode })
+    body: JSON.stringify({ gameId, playerId, orderQty, expressQty })
   });
 }
 

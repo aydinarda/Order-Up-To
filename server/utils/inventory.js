@@ -8,7 +8,10 @@
 // The warehouse starts EMPTY (no starting stock). Round 1 is a priming round:
 // no demand / no sales — the player just places an opening order, and that
 // opening order arrives fast (lead time 1, i.e. at the start of round 2).
-// Every later order uses the configured lead time L.
+// Every later order uses the configured lead time L, which the admin may raise
+// or lower between rounds — supply conditions shift mid-season. An in-flight
+// order always keeps the arrival time it shipped with; only new orders feel
+// the change.
 //
 // Pipeline convention (the off-by-one guard): pipeline has length L + 1 — one
 // extra "reserve" slot beyond the normal horizon, held for shipping-delay
@@ -30,13 +33,14 @@
 // Purchase cost is charged at order time (q * unitCost), so end-of-game
 // leftovers are sunk — no salvage step.
 //
-// Delivery mode (the storyline's central trade-off): each order ships either by
+// Delivery modes (the storyline's central trade-off): each round the player
+// can split the order across BOTH vehicles at once:
 //   - "consolidated" truck — big capacity, cheaper + lower CO2 per vehicle, but
-//     the full configured lead time L; or
+//     the full configured lead time L; and/or
 //   - "express" van — always arrives in EXPRESS_LEAD_TIME (1 round) to rescue a
 //     stockout, but smaller capacity and strictly higher cost + CO2 per vehicle,
 //     so it is both more expensive and dirtier per kg. Use it sparingly.
-// The mode only changes vehicle economics and arrival timing; everything else
+// The split only changes vehicle economics and arrival timing; everything else
 // (holding, storage CO2, lost sales) is identical.
 
 // Express always arrives the round after it's placed. Not admin-configurable —
@@ -60,22 +64,6 @@ export const DEFAULT_CONFIG = {
   expressCo2: 250
 };
 
-// Vehicle economics for a mode: capacity, per-vehicle cost, per-vehicle CO2.
-function vehicleProfile(config, mode) {
-  if (mode === "express") {
-    return {
-      capacity: config.expressCapacity,
-      fixedCost: config.expressFixedCost,
-      co2: config.expressCo2
-    };
-  }
-  return {
-    capacity: config.truckCapacity,
-    fixedCost: config.fixedCostPerTruck,
-    co2: config.co2PerTruck
-  };
-}
-
 export function createInitialState(config = DEFAULT_CONFIG) {
   return {
     onHand: 0,
@@ -84,19 +72,24 @@ export function createInitialState(config = DEFAULT_CONFIG) {
 }
 
 // options:
-//   leadTime — periods until this order arrives (defaults to config.leadTime;
-//              the round-1 opening order passes 1). For express orders the
-//              caller passes EXPRESS_LEAD_TIME.
-//   mode — "consolidated" (default) or "express": selects vehicle economics.
+//   leadTime — periods until the CONSOLIDATED part of this order arrives
+//              (defaults to config.leadTime; the round-1 opening order passes
+//              1). The express part always arrives in EXPRESS_LEAD_TIME.
+//   expressQty — units additionally shipped by express van this round (default
+//                0). Both vehicles can be used in the same round: `order` rides
+//                the consolidated truck, `expressQty` rides the express van.
 //   priming — round 1: no demand is realized, no sales, no lost sales
 //   delayed — a shared shipping-delay event hit this round: nothing arrives,
-//             nothing already in the pipeline advances, and this round's order
-//             is queued one slot deeper to compensate
+//             nothing already in the pipeline advances, and this round's
+//             orders are queued one slot deeper to compensate
 export function advancePeriod(state, config, demand, order, options = {}) {
-  const mode = options.mode === "express" ? "express" : "consolidated";
-  const orderLeadTime = options.leadTime ?? (mode === "express" ? EXPRESS_LEAD_TIME : config.leadTime);
+  const orderLeadTime = options.leadTime ?? config.leadTime;
   const priming = options.priming ?? false;
   const delayed = options.delayed ?? false;
+
+  const consolidatedQty = Math.max(0, order); // placed directly by the player
+  const expressQty = Math.max(0, options.expressQty ?? 0);
+  const orderQty = consolidatedQty + expressQty;
 
   const arrival = delayed ? 0 : state.pipeline[0] ?? 0;
   const available = state.onHand + arrival;
@@ -105,21 +98,27 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   const lost = priming ? 0 : Math.max(0, demand - available);
   const onHandEnd = available - sold;
 
-  const orderQty = Math.max(0, order); // placed directly by the player
-  const { capacity, fixedCost, co2: co2PerVehicle } = vehicleProfile(config, mode);
-  const trucks = orderQty > 0 ? Math.ceil(orderQty / capacity) : 0;
+  const trucks = consolidatedQty > 0 ? Math.ceil(consolidatedQty / config.truckCapacity) : 0;
+  const vans = expressQty > 0 ? Math.ceil(expressQty / config.expressCapacity) : 0;
 
-  // On a normal round, the pipeline shifts forward by one and the order lands
-  // at (leadTime - 1). On a delayed round, nothing shifts (everything already
-  // in transit — including what was due this round — just waits one more
-  // round), and the new order lands one slot deeper so it still needs exactly
-  // `orderLeadTime` normal rounds once the freeze lifts.
-  const maxSlot = state.pipeline.length - 1;
+  // On a normal round, the pipeline shifts forward by one; the consolidated
+  // order lands at (leadTime - 1) and the express order at slot 0 (next round).
+  // On a delayed round, nothing shifts (everything already in transit —
+  // including what was due this round — just waits one more round), and both
+  // orders land one slot deeper so each still needs exactly its own lead time
+  // of normal rounds once the freeze lifts.
+  //
+  // The admin can raise leadTime mid-game, so the pipeline may be shorter than
+  // this order now needs — grow it with empty slots (never truncate: orders
+  // already in flight keep the arrival time they shipped with).
   const shifted = delayed ? [...state.pipeline] : [...state.pipeline.slice(1), 0];
-  const slot = delayed
-    ? Math.min(orderLeadTime, maxSlot)
-    : Math.min(Math.max(orderLeadTime - 1, 0), maxSlot);
-  shifted[slot] += orderQty;
+  while (shifted.length < orderLeadTime + 1) {
+    shifted.push(0);
+  }
+  const consolidatedSlot = delayed ? orderLeadTime : Math.max(orderLeadTime - 1, 0);
+  shifted[consolidatedSlot] += consolidatedQty;
+  const expressSlot = delayed ? EXPRESS_LEAD_TIME : EXPRESS_LEAD_TIME - 1;
+  shifted[expressSlot] += expressQty;
 
   const inTransitRemaining = shifted.reduce((sum, qty) => sum + qty, 0) - orderQty;
   const inventoryPosition = onHandEnd + inTransitRemaining;
@@ -127,15 +126,19 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   const revenue = sold * config.price;
   const purchaseCost = orderQty * config.unitCost;
   const holdingCost = onHandEnd * config.holdingCost;
-  const truckCost = trucks * fixedCost;
+  const truckCost = trucks * config.fixedCostPerTruck + vans * config.expressFixedCost;
   const profit = revenue - purchaseCost - holdingCost - truckCost;
 
-  const transportCo2 = trucks * co2PerVehicle;
+  const transportCo2 = trucks * config.co2PerTruck + vans * config.expressCo2;
   const storageCo2 = onHandEnd * config.co2PerUnitHeld;
 
   // Total vehicle capacity dispatched this round — lets the leaderboard compute
-  // an accurate fleet utilisation across a mix of consolidated + express rounds.
-  const capacityUnits = trucks * capacity;
+  // an accurate fleet utilisation across a mix of consolidated + express legs.
+  const capacityUnits = trucks * config.truckCapacity + vans * config.expressCapacity;
+
+  // Label kept for round history / DB logs and the result screen.
+  const mode =
+    expressQty > 0 ? (consolidatedQty > 0 ? "mixed" : "express") : "consolidated";
 
   const nextState = { onHand: onHandEnd, pipeline: shifted };
 
@@ -153,10 +156,13 @@ export function advancePeriod(state, config, demand, order, options = {}) {
       inTransitEnd: inTransitRemaining + orderQty,
       inventoryPosition,
       orderQty,
+      consolidatedQty,
+      expressQty,
       trucks,
-      vehicleCapacity: capacity,
+      vans,
+      vehicles: trucks + vans,
       capacityUnits,
-      truckFillPct: trucks > 0 ? (orderQty / capacityUnits) * 100 : null,
+      truckFillPct: orderQty > 0 && capacityUnits > 0 ? (orderQty / capacityUnits) * 100 : null,
       revenue,
       purchaseCost,
       holdingCost,

@@ -34,7 +34,9 @@ function calculateLeaderboard(players, config) {
         co2: acc.co2 + entry.co2,
         lost: acc.lost + entry.lost,
         sold: acc.sold + entry.sold,
-        trucks: acc.trucks + entry.trucks,
+        // `vehicles` counts both consolidated trucks and express vans of a
+        // round; older history entries only carry `trucks`.
+        trucks: acc.trucks + (entry.vehicles ?? entry.trucks),
         ordered: acc.ordered + entry.orderQty,
         // Total vehicle capacity dispatched, so fleet fill is accurate even when
         // a player mixes consolidated trucks and (smaller) express vans.
@@ -63,12 +65,14 @@ function calculateLeaderboard(players, config) {
   return computeParetoFronts(rows).map((row, index) => ({ rank: index + 1, ...row }));
 }
 
-// Admin-tunable economy. leadTime and seed are frozen once the first round has
-// started (they would corrupt in-flight pipelines / replayability).
+// Admin-tunable economy. Only seed is frozen once the first round has started
+// (it would corrupt replayability).
 const CONFIG_FIELDS = {
   // Lead time must be >= 1: round 1 is a priming round whose opening order
   // arrives with lead time 1, so a 0-period lead time would be nonsensical.
-  leadTime: { integer: true, min: 1, max: 5, preGameOnly: true },
+  // Adjustable mid-game (supply conditions shift): in-flight orders keep the
+  // arrival time they shipped with, only new orders use the new lead time.
+  leadTime: { integer: true, min: 1, max: 5 },
   price: { integer: false, min: 0.01 },
   unitCost: { integer: false, min: 0 },
   holdingCost: { integer: false, min: 0 },
@@ -261,7 +265,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       // Late joiners start with a fresh warehouse mid-game — acceptable for a classroom.
       inventory: createInitialState(activeGame.config),
       lastQ: null,
-      lastMode: null
+      lastExpressQty: null
     };
 
     activeGame.players.set(player.id, player);
@@ -430,13 +434,26 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
     activeGame.config = { ...activeGame.config, ...updates };
 
-    // Pre-game structural changes reset every player's warehouse and the demand
-    // stream so round 1 starts from the new shape.
     if (updates.leadTime !== undefined || updates.seed !== undefined) {
-      for (const player of activeGame.players.values()) {
-        player.inventory = createInitialState(activeGame.config);
+      if (!gameStarted) {
+        // Pre-game structural changes reset every player's warehouse and the
+        // demand stream so round 1 starts from the new shape.
+        for (const player of activeGame.players.values()) {
+          player.inventory = createInitialState(activeGame.config);
+        }
+        activeGame.rand = createRng(activeGame.config.seed);
+      } else if (updates.leadTime !== undefined) {
+        // Mid-game lead-time change: never touch what's already in flight —
+        // just grow pipelines that are now too short so the next order (and
+        // the pipeline viz) can reach the new horizon. Longer pipelines keep
+        // their extra slots; trailing zeros are harmless.
+        for (const player of activeGame.players.values()) {
+          const pipeline = player.inventory.pipeline;
+          while (pipeline.length < activeGame.config.leadTime + 1) {
+            pipeline.push(0);
+          }
+        }
       }
-      activeGame.rand = createRng(activeGame.config.seed);
     }
 
     emitGameEvent(activeGame, "config_updated");
@@ -530,7 +547,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
   });
 
   app.post("/submit-order", (req, res) => {
-    const { gameId, playerId, orderQty, mode: rawMode } = req.body || {};
+    const { gameId, playerId, orderQty, expressQty, mode: rawMode } = req.body || {};
 
     if (!activeGame || gameId !== activeGame.id) {
       return res.status(400).json({ error: "invalid or inactive game id" });
@@ -558,16 +575,24 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     }
 
     // q = 0 is a legal decision: "order nothing this round, run the shelves down".
-    const parsedQty = Number(orderQty);
+    // The player can split the order across BOTH vehicles in the same round:
+    // `orderQty` rides the consolidated truck, `expressQty` the express van.
+    const parsedQty = Number(orderQty ?? 0);
     if (!Number.isInteger(parsedQty) || parsedQty < 0) {
       return res.status(400).json({ error: "orderQty must be a non-negative integer" });
     }
+    const parsedExpressQty = Number(expressQty ?? 0);
+    if (!Number.isInteger(parsedExpressQty) || parsedExpressQty < 0) {
+      return res.status(400).json({ error: "expressQty must be a non-negative integer" });
+    }
 
-    // Delivery mode: default to the consolidated truck when unspecified.
-    const mode = rawMode === "express" ? "express" : "consolidated";
-    if (rawMode !== undefined && mode !== rawMode) {
+    // Back-compat: an old client sends a single quantity plus mode. Route
+    // mode:"express" onto the express van; reject anything unrecognised.
+    if (rawMode !== undefined && rawMode !== "consolidated" && rawMode !== "express") {
       return res.status(400).json({ error: "mode must be 'consolidated' or 'express'" });
     }
+    const consolidatedQty = rawMode === "express" ? 0 : parsedQty;
+    const finalExpressQty = rawMode === "express" ? parsedQty + parsedExpressQty : parsedExpressQty;
 
     const round = getRoundForGame(activeGame);
     if (!round) {
@@ -583,8 +608,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundOrders.set(player.id, {
       playerId: player.id,
       nickname: player.nickname,
-      orderQty: parsedQty,
-      mode,
+      orderQty: consolidatedQty,
+      expressQty: finalExpressQty,
       submittedAt: new Date().toISOString()
     });
 
@@ -597,8 +622,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     return res.json({
       accepted: true,
       roundId: round.id,
-      orderQty: parsedQty,
-      mode,
+      orderQty: consolidatedQty,
+      expressQty: finalExpressQty,
       cumulativeProfit: player.cumulativeProfit,
       roundsPlayed: player.history.length,
       totalRounds: activeGame.handsPerTur,
@@ -638,16 +663,16 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     const dbRoundResults = [];
 
     // Record a result for every player so non-submitters also see the round outcome.
-    // A missing submission repeats the player's previous order quantity ("keep
+    // A missing submission repeats the player's previous round's split ("keep
     // ordering the same"); with no prior order yet, the fallback is 0.
     for (const player of activeGame.players.values()) {
       const order = activeGame.activeRoundOrders.get(player.id);
       const orderQty = order ? order.orderQty : player.lastQ ?? 0;
-      // A non-submitter repeats their previous delivery mode (default consolidated).
-      const mode = order ? order.mode : player.lastMode ?? "consolidated";
-      // Express always arrives next round; the priming opening order also uses a
-      // 1-round lead time. Otherwise a consolidated order uses the configured L.
-      const orderLeadTime = isPriming || mode === "express" ? 1 : activeGame.config.leadTime;
+      const expressQty = order ? order.expressQty : player.lastExpressQty ?? 0;
+      // The priming opening order uses a 1-round lead time; otherwise the
+      // consolidated leg uses the configured L. The express leg always arrives
+      // next round (handled inside advancePeriod).
+      const orderLeadTime = isPriming ? 1 : activeGame.config.leadTime;
 
       const { nextState, result } = advancePeriod(
         player.inventory,
@@ -656,7 +681,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         orderQty,
         {
           leadTime: orderLeadTime,
-          mode,
+          expressQty,
           priming: isPriming,
           delayed: wasDelayed
         }
@@ -673,7 +698,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
       player.inventory = nextState;
       player.lastQ = orderQty;
-      player.lastMode = mode;
+      player.lastExpressQty = expressQty;
       player.history.push(roundResult);
       player.cumulativeProfit += roundResult.profit;
 
@@ -681,14 +706,14 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         playerId: player.id,
         nickname: player.nickname,
         orderQty: result.orderQty,
-        mode: result.mode,
+        mode: result.mode, // "consolidated" | "express" | "mixed"
         submittedAt: order ? order.submittedAt : null,
         arrival: result.arrival,
         sold: result.sold,
         lost: result.lost,
         onHandEnd: result.onHandEnd,
         inTransit: result.inTransitEnd,
-        trucks: result.trucks,
+        trucks: result.vehicles,
         co2Transport: result.transportCo2,
         co2Storage: result.storageCo2,
         profit: result.profit
@@ -880,7 +905,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         turHistory: [],
         inventory: createInitialState(activeGame.config),
         lastQ: null,
-        lastMode: null
+        lastExpressQty: null
       });
     }
 

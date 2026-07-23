@@ -992,12 +992,25 @@ button.danger:hover {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .delivery-mode:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+/* Each delivery leg carries its own quantity input — both legs can ship in the
+   same round. */
+.delivery-mode label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+.delivery-mode input {
+  width: 100%;
 }
 
 .delivery-mode.selected {

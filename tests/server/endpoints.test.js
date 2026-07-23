@@ -94,7 +94,7 @@ test("set-config cannot be changed during an active round", async () => {
   assert.match(res.body.error, /active round/i);
 });
 
-test("leadTime and seed are frozen once a round has ended", async () => {
+test("seed is frozen once a round has ended; leadTime stays adjustable", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken } = await createGame(app, { handsPerTur: 3 });
 
@@ -109,20 +109,59 @@ test("leadTime and seed are frozen once a round has ended", async () => {
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
-  for (const frozen of [{ leadTime: 1 }, { seed: 9 }]) {
-    const res = await request(app)
-      .post("/set-config")
-      .send({ gameId, adminToken, ...frozen });
-    assert.equal(res.status, 400, JSON.stringify(frozen));
-    assert.match(res.body.error, /before the first round/i);
-  }
+  const frozenSeed = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, seed: 9 });
+  assert.equal(frozenSeed.status, 400);
+  assert.match(frozenSeed.body.error, /before the first round/i);
 
-  // Non-structural fields stay adjustable between rounds (mid-game shock).
+  // leadTime and other fields stay adjustable between rounds (mid-game shock).
   const midGame = await request(app)
     .post("/set-config")
-    .send({ gameId, adminToken, co2PerTruck: 200 });
+    .send({ gameId, adminToken, leadTime: 4, co2PerTruck: 200 });
   assert.equal(midGame.status, 200);
+  assert.equal(midGame.body.config.leadTime, 4);
   assert.equal(midGame.body.config.co2PerTruck, 200);
+});
+
+test("mid-game leadTime change keeps in-flight orders and applies to new ones", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app, { handsPerTur: 5 });
+
+  await request(app).post("/set-config").send({ gameId, adminToken, leadTime: 2 });
+
+  // Round 1 (priming): opening order of 30 arrives at the start of round 2.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 30 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  // Round 2: order 50 in flight under leadTime 2 (arrives start of round 4).
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 50 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  let gs = await request(app).get("/game-state").query({ gameId, playerId });
+  const beforePipeline = gs.body.player.inventory.pipeline;
+  assert.equal(beforePipeline[1], 50); // due in 2 rounds
+
+  // Raise leadTime to 4 between rounds: the in-flight 50 must not move, and
+  // the pipeline grows so the next order can reach the new horizon.
+  await request(app).post("/set-config").send({ gameId, adminToken, leadTime: 4 });
+
+  gs = await request(app).get("/game-state").query({ gameId, playerId });
+  const grownPipeline = gs.body.player.inventory.pipeline;
+  assert.equal(grownPipeline[1], 50); // unchanged arrival
+  assert.equal(grownPipeline.length, 5); // leadTime + 1 reserve slot
+
+  // Round 3: a new order of 70 ships under the new leadTime 4.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 70 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  gs = await request(app).get("/game-state").query({ gameId, playerId });
+  const after = gs.body.player.inventory.pipeline;
+  assert.equal(after[0], 50); // old order: due next round, as originally shipped
+  assert.equal(after[3], 70); // new order: 4 rounds out
 });
 
 test("pre-game lead-time change reshapes every player's empty pipeline", async () => {
@@ -273,6 +312,7 @@ test("submit-order rejects an unknown delivery mode", async () => {
   assert.match(res.body.error, /mode/i);
 });
 
+// Back-compat: an old client sends a single quantity plus mode:"express".
 test("an express order arrives the round after it is placed", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, playerId } = await createGame(app, {
@@ -298,6 +338,60 @@ test("an express order arrives the round after it is placed", async () => {
   const round3 = gs.body.player.history[2];
   assert.equal(round3.arrival, 40); // express landed one round after placement
   assert.equal(gs.body.player.history[1].mode, "express");
+});
+
+test("both vehicles can be used in the same round: split arrivals, summed cost and CO2", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app, {
+    handsPerTur: 5,
+    config: { leadTime: 2 }
+  });
+
+  // Priming round: no order.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  // Round 2: 250 kg by consolidated truck (3 trucks, arrives round 4) AND
+  // 90 kg by express van (3 vans, arrives round 3) in the SAME submission.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  const submit = await request(app)
+    .post("/submit-order")
+    .send({ gameId, playerId, orderQty: 250, expressQty: 90 });
+  assert.equal(submit.status, 200);
+  assert.equal(submit.body.orderQty, 250);
+  assert.equal(submit.body.expressQty, 90);
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  let gs = await request(app).get("/game-state").query({ gameId, playerId });
+  const mixedRound = gs.body.player.history[1];
+  const cfg = gs.body.config;
+
+  // Cost and CO2 are the sums of both fleets (defaults: 3×$50 + 3×$120,
+  // 3×100 kg + 3×250 kg), and the purchase covers the combined 340 kg.
+  assert.equal(mixedRound.mode, "mixed");
+  assert.equal(mixedRound.orderQty, 340);
+  assert.equal(mixedRound.trucks, 3);
+  assert.equal(mixedRound.vans, 3);
+  assert.equal(mixedRound.truckCost, 3 * cfg.fixedCostPerTruck + 3 * cfg.expressFixedCost);
+  assert.equal(mixedRound.transportCo2, 3 * cfg.co2PerTruck + 3 * cfg.expressCo2);
+  assert.equal(mixedRound.purchaseCost, 340 * cfg.unitCost);
+
+  // Round 3: exactly the express 90 kg lands.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  gs = await request(app).get("/game-state").query({ gameId, playerId });
+  assert.equal(gs.body.player.history[2].arrival, 90);
+
+  // Round 4: the consolidated 250 kg lands after the full lead time.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  gs = await request(app).get("/game-state").query({ gameId, playerId });
+  assert.equal(gs.body.player.history[3].arrival, 250);
 });
 
 // ── Admin announcements ─────────────────────────────────────────────────────

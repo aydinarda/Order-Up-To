@@ -30,10 +30,12 @@ import {
   getSessionFromUrl
 } from "./utils/sessionStorage";
 
-// Admin-tunable economy fields; the draft holds raw input strings. leadTime is
-// frozen server-side once the first round has ended.
+// Admin-tunable economy fields; the draft holds raw input strings. All of them
+// stay adjustable between rounds — a mid-game leadTime change only affects new
+// orders (in-flight ones keep their arrival time). Round 1's opening order
+// always arrives in 1 round regardless.
 const CONFIG_FIELD_DEFS = [
-  { key: "leadTime", label: "Lead time (rounds)", preGameOnly: true },
+  { key: "leadTime", label: "Lead time (rounds)" },
   { key: "price", label: "Price ($/unit)" },
   { key: "unitCost", label: "Unit cost ($/unit)" },
   { key: "holdingCost", label: "Holding ($/unit/round)" },
@@ -349,14 +351,14 @@ function App() {
     }
   };
 
-  const handleOrderSubmit = async (orderQty, mode = "consolidated") => {
+  const handleOrderSubmit = async (orderQty, expressQty = 0) => {
     if (!currentRound || !gameId || !playerId) {
       return;
     }
 
     try {
       setErrorMessage("");
-      const data = await submitOrder({ gameId, playerId, orderQty, mode });
+      const data = await submitOrder({ gameId, playerId, orderQty, expressQty });
 
       setRoundPhase(data.roundPhase || roundPhase);
       setIsRoundSubmitted(true);
