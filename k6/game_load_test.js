@@ -1,16 +1,16 @@
 /**
- * k6 Concurrent Load Tests – SimpleNewsVendorGame
+ * k6 Concurrent Load Tests – OrderUpToGame
  *
- * NOT: Sunucu tek bir aktif oyun tutar. Setup bu oyunu oluşturur ve
- * 100 oyuncu önceden eklenir; tüm senaryolar bu veriyi kullanır.
+ * NOTE: The server holds a single active game. Setup creates that game and
+ * pre-registers 100 players; every scenario reuses this shared data.
  *
- * Senaryolar:
- *   1. poll_storm        – 100 VU, /game-state'i 30 sn boyunca sürekli sorgular
- *   2. concurrent_submit – 100 VU eş zamanlı olarak sipariş verir
- *   3. health_storm      – 100 VU /health'i 15 sn boyunca sorgular
- *   4. spike_join        – 50 yeni VU aynı anda oyuna katılmaya çalışır
+ * Scenarios:
+ *   1. poll_storm        – 100 VUs hammer /game-state for 30s while a round is active
+ *   2. concurrent_submit – 100 VUs place an order at the same time
+ *   3. health_storm      – 100 VUs poll /health for 15s
+ *   4. spike_join        – 50 fresh VUs try to join the game simultaneously
  *
- * Eşikler (Render free tier için gerçekçi değerler):
+ * Thresholds (realistic for Render free tier):
  *   - submit p(95) < 8000 ms
  *   - poll   p(95) < 5000 ms
  *   - join   p(95) < 8000 ms
@@ -26,7 +26,7 @@ const BASE      = (__ENV.BASE_URL  || 'https://simplenewsvendorgame.onrender.com
 const ADMIN_KEY = __ENV.ADMIN_KEY  || 'admin123';
 const HDR       = { headers: { 'Content-Type': 'application/json' } };
 
-// ── Özel metrikler ────────────────────────────────────────────────────────────
+// ── Custom metrics ────────────────────────────────────────────────────────────
 const submitLatency = new Trend('submit_latency', true);
 const pollLatency   = new Trend('poll_latency',   true);
 const joinLatency   = new Trend('join_latency',   true);
@@ -35,10 +35,10 @@ const gameErrors    = new Counter('game_errors');
 const N_PLAYERS   = 100;
 const N_SPIKE_VUS = 50;
 
-// ── Seçenekler ────────────────────────────────────────────────────────────────
+// ── Options ───────────────────────────────────────────────────────────────────
 export const options = {
   scenarios: {
-    // 1. 100 VU → /game-state (tur aktifken, 30 sn boyunca)
+    // 1. 100 VUs → /game-state (while a round is active, for 30s)
     poll_storm: {
       executor:  'constant-vus',
       vus:       100,
@@ -48,7 +48,7 @@ export const options = {
       tags:      { scenario: 'poll_storm' },
     },
 
-    // 2. 100 VU → /submit-order (eş zamanlı, her biri 1 kez)
+    // 2. 100 VUs → /submit-order (concurrent, one each)
     concurrent_submit: {
       executor:    'shared-iterations',
       vus:         N_PLAYERS,
@@ -59,7 +59,7 @@ export const options = {
       tags:        { scenario: 'concurrent_submit' },
     },
 
-    // 3. 100 VU → /health (15 sn boyunca)
+    // 3. 100 VUs → /health (for 15s)
     health_storm: {
       executor:  'constant-vus',
       vus:       100,
@@ -69,7 +69,7 @@ export const options = {
       tags:      { scenario: 'health_storm' },
     },
 
-    // 4. 50 yeni VU → /start-game (eş zamanlı join dalgası)
+    // 4. 50 fresh VUs → /start-game (simultaneous join wave)
     spike_join: {
       executor:    'shared-iterations',
       vus:         N_SPIKE_VUS,
@@ -82,18 +82,18 @@ export const options = {
   },
 
   thresholds: {
-    // Render free tier cold-start sonrası latency'leri yüksek olabiliyor
+    // Latencies can spike after a Render free-tier cold start.
     'submit_latency': ['p(95)<8000'],
     'poll_latency':   ['p(95)<5000'],
     'join_latency':   ['p(95)<8000'],
-    // 5xx hatası sayacı — spike_join/submit 4xx'leri buraya girmez
+    // 5xx error counter — spike_join/submit 4xx responses do not count here.
     'game_errors':    ['count<20'],
-    // health_storm %100 başarılı olmalı; diğer senaryolarda 4xx beklenen davranış
+    // health_storm must be 100% healthy; 4xx in other scenarios is expected.
     'http_req_failed{scenario:health_storm}': ['rate<0.05'],
   },
 };
 
-// ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function post(path, body) {
   return http.post(`${BASE}${path}`, JSON.stringify(body), HDR);
 }
@@ -109,31 +109,35 @@ function gameStateUrl(gameId, playerId, adminToken) {
   return url;
 }
 
-// ── Setup: tüm senaryolardan önce 1 kez çalışır ───────────────────────────────
+// ── Setup: runs once before all scenarios ─────────────────────────────────────
 export function setup() {
-  // Backend'in ayakta olduğunu doğrula
+  // Make sure the backend is awake.
   let alive = false;
   for (let i = 0; i < 6; i++) {
     const r = http.get(`${BASE}/health`, HDR);
     if (r.status === 200) { alive = true; break; }
     sleep(5);
   }
-  if (!alive) throw new Error('setup: /health yanıt vermedi');
+  if (!alive) throw new Error('setup: /health did not respond');
 
-  // Admin oyunu oluşturur (1 hand → sade test ortamı)
+  // Admin creates the game. handsPerTur=2: round 1 is the "priming" round (no
+  // demand is realized — the opening order just arrives after the lead time),
+  // and the real demand round is round 2. Setup plays through the priming round
+  // in setup so the scenarios submit into round 2 and teardown sees a real
+  // realizedDemand.
   const adminR = post('/start-game', {
     nickname:    'admin_k6',
     adminKey:    ADMIN_KEY,
-    handsPerTur: 1,
+    handsPerTur: 2,
   });
   const adminD = j(adminR);
   if (!adminD.gameId || !adminD.adminToken) {
-    throw new Error(`setup: oyun oluşturulamadı – ${adminR.body.slice(0, 200)}`);
+    throw new Error(`setup: could not create game – ${adminR.body.slice(0, 200)}`);
   }
   const { gameId, adminToken } = adminD;
   const adminPlayerId = adminD.playerId;
 
-  // 100 oyuncu katılır (sıralı – setup tek VU'da çalışır)
+  // 100 players join (sequentially – setup runs in a single VU).
   const players = [];
   for (let i = 0; i < N_PLAYERS; i++) {
     const r = post('/start-game', {
@@ -146,20 +150,28 @@ export function setup() {
     }
   }
   if (players.length < N_PLAYERS) {
-    throw new Error(`setup: ${players.length}/${N_PLAYERS} oyuncu katıldı`);
+    throw new Error(`setup: ${players.length}/${N_PLAYERS} players joined`);
   }
 
-  // Admin turu başlatır
+  // Play the priming round to completion (round 1 realizes no demand). Missing
+  // submissions default to 0, so we can end it immediately.
+  const prime = j(post('/start-round', { gameId, adminToken }));
+  if (prime.roundPhase !== 'active') {
+    throw new Error(`setup: could not start priming round – ${JSON.stringify(prime).slice(0, 200)}`);
+  }
+  post('/end-round', { gameId, adminToken });
+
+  // Start round 2 — the real demand round the scenarios will poll/submit against.
   const startR = post('/start-round', { gameId, adminToken });
   const startD = j(startR);
   if (startD.roundPhase !== 'active') {
-    throw new Error(`setup: tur başlatılamadı – ${startR.body.slice(0, 200)}`);
+    throw new Error(`setup: could not start round – ${startR.body.slice(0, 200)}`);
   }
 
   return { gameId, adminToken, adminPlayerId, players };
 }
 
-// ── Senaryo 1: poll_storm ─────────────────────────────────────────────────────
+// ── Scenario 1: poll_storm ────────────────────────────────────────────────────
 export function pollStorm(data) {
   const player = data.players[(__VU - 1) % data.players.length];
   const t0     = Date.now();
@@ -168,38 +180,44 @@ export function pollStorm(data) {
 
   const d  = j(r);
   const ok = check(r, {
-    'poll: 200':            () => r.status === 200,
-    'poll: roundPhase set': () => typeof d.roundPhase === 'string',
-    'poll: gameId eşleşti': () => d.gameId === data.gameId,
+    'poll: 200':             () => r.status === 200,
+    'poll: roundPhase set':  () => typeof d.roundPhase === 'string',
+    'poll: gameId matches':  () => d.gameId === data.gameId,
   });
   if (!ok) gameErrors.add(1);
   sleep(1);
 }
 
-// ── Senaryo 2: concurrent_submit ──────────────────────────────────────────────
+// ── Scenario 2: concurrent_submit ─────────────────────────────────────────────
 export function concurrentSubmit(data) {
   const idx    = scenario.iterationInTest % data.players.length;
   const player = data.players[idx];
   const qty    = Math.floor(Math.random() * 41) + 80; // 80–120
 
+  // Two-vehicle order: most rides the consolidated truck; ~30% of players also
+  // split a little onto the express van (arrives same round) to exercise both legs.
+  const useExpress = Math.random() < 0.3;
+  const expressQty = useExpress ? Math.floor(Math.random() * 30) + 10 : 0; // 10–39
+
   const t0 = Date.now();
   const r  = post('/submit-order', {
-    gameId:        data.gameId,
-    playerId:      player.playerId,
-    orderUpTo: qty,
+    gameId:   data.gameId,
+    playerId: player.playerId,
+    orderQty: qty,
+    expressQty,
   });
   submitLatency.add(Date.now() - t0);
 
   const d  = j(r);
-  // 400 "already submitted" beklenen — sadece 5xx gerçek hata
+  // 400 "already submitted" is expected — only 5xx is a real failure.
   const ok = check(r, {
-    'submit: 5xx yok':       () => r.status < 500,
+    'submit: no 5xx':        () => r.status < 500,
     'submit: accepted true': () => r.status !== 200 || d.accepted === true,
   });
   if (r.status >= 500) gameErrors.add(1);
 }
 
-// ── Senaryo 3: health_storm ───────────────────────────────────────────────────
+// ── Scenario 3: health_storm ──────────────────────────────────────────────────
 export function healthStorm(_data) {
   const r  = http.get(`${BASE}/health`, HDR);
   const d  = j(r);
@@ -210,9 +228,9 @@ export function healthStorm(_data) {
   if (!ok) gameErrors.add(1);
 }
 
-// ── Senaryo 4: spike_join ─────────────────────────────────────────────────────
-// 50 yeni isimle oyuna eş zamanlı katılma denemesi.
-// 400 (oyun bitti) / 409 (isim çakışması) beklenen — 5xx OLMAMALI.
+// ── Scenario 4: spike_join ────────────────────────────────────────────────────
+// 50 fresh names try to join the game at the same time.
+// 400 (game over) / 409 (name clash) are expected — 5xx must NOT happen.
 export function spikeJoin(data) {
   const name = `Spike_${scenario.iterationInTest + 1}_${__VU}`;
   const t0   = Date.now();
@@ -220,46 +238,48 @@ export function spikeJoin(data) {
   joinLatency.add(Date.now() - t0);
 
   const ok = check(r, {
-    'spike_join: 5xx yok':     () => r.status < 500,
+    'spike_join: no 5xx':      () => r.status < 500,
     'spike_join: 200/400/409': () =>
       r.status === 200 || r.status === 400 || r.status === 409,
   });
-  if (!ok) gameErrors.add(1); // sadece 5xx gerçek hata
+  if (!ok) gameErrors.add(1); // only 5xx is a real failure
 }
 
-// ── Teardown: tüm senaryolar bittikten sonra 1 kez çalışır ───────────────────
+// ── Teardown: runs once after all scenarios finish ───────────────────────────
 export function teardown(data) {
-  // Admin turu bitirir
+  // Admin ends the (round 2) round.
   const endR = post('/end-round', { gameId: data.gameId, adminToken: data.adminToken });
   const endD = j(endR);
   check(endD, {
-    'teardown: tur bitti':     () => endD.roundPhase === 'pending' || endD.finished === true,
-    'teardown: leaderboard var': () => Array.isArray(endD.leaderboard),
-    'teardown: realizedDemand var': () => typeof endD.realizedDemand === 'number',
+    'teardown: round ended':       () => endD.roundPhase === 'pending' || endD.finished === true,
+    'teardown: leaderboard set':   () => Array.isArray(endD.leaderboard),
+    'teardown: realizedDemand set': () => typeof endD.realizedDemand === 'number',
   });
 
   if (typeof endD.realizedDemand === 'number') {
-    console.log(`teardown: gerçekleşen talep = ${endD.realizedDemand}`);
+    console.log(`teardown: realized demand = ${endD.realizedDemand}`);
   }
 
-  // Admin roundHistory'i görebilmeli (yeni özellik doğrulama)
+  // Admin should be able to see roundHistory (feature check).
   const gsR = http.get(
     gameStateUrl(data.gameId, data.adminPlayerId, data.adminToken),
     HDR
   );
   const gsd = j(gsR);
+  const history = gsd.roundHistory || [];
   check(gsd, {
-    'teardown: roundHistory admin için görünür': () => Array.isArray(gsd.roundHistory),
-    'teardown: en az 1 kayıt var':              () => (gsd.roundHistory || []).length >= 1,
-    'teardown: realizedDemand kayıtlı':         () =>
-      typeof (gsd.roundHistory || [])[0]?.realizedDemand === 'number',
+    'teardown: roundHistory visible to admin': () => Array.isArray(gsd.roundHistory),
+    'teardown: at least one record':           () => history.length >= 1,
+    // The last record is round 2 (real demand); the priming round records null.
+    'teardown: realizedDemand recorded':       () =>
+      typeof history[history.length - 1]?.realizedDemand === 'number',
   });
 
-  // Liderboard doğrula
+  // Verify the leaderboard.
   const lbR = http.get(`${BASE}/leaderboard?gameId=${data.gameId}`, HDR);
   const lbd = j(lbR);
   check(lbd, {
-    'teardown: leaderboard endpoint çalışıyor': () => lbR.status === 200,
-    'teardown: leaderboard dolu':               () => (lbd.leaderboard || []).length > 0,
+    'teardown: leaderboard endpoint works': () => lbR.status === 200,
+    'teardown: leaderboard populated':      () => (lbd.leaderboard || []).length > 0,
   });
 }

@@ -1,5 +1,5 @@
 /**
- * k6 Full Session Load Test — SimpleNewsVendorGame
+ * k6 Full Session Load Test — OrderUpToGame
  *
  * Realistic, classroom-paced scenario with a mid-game restart:
  *   - 1 admin + 100 players in a single game, a full 30-round game played end to end.
@@ -289,9 +289,11 @@ export function playerLoop(data) {
   if (gs.roundPhase === "active" && gs.player && !gs.player.submittedThisRound) {
     sleep(Math.random() * 3); // brief human reaction delay before ordering
     const qty = chooseOrder(gs.distribution);
+    // ~30% also split a little onto the express van (same-round arrival).
+    const expressQty = Math.random() < 0.3 ? Math.floor(Math.random() * 30) + 10 : 0;
 
     const s0 = Date.now();
-    const r = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderUpTo: qty });
+    const r = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderQty: qty, expressQty });
     submitLatency.add(Date.now() - s0);
 
     if (r.status === 200) submitAccepted.add(1);
@@ -300,7 +302,7 @@ export function playerLoop(data) {
 
     // ~10%: accidental double-submit (the server should reject with 400).
     if (Math.random() < 0.1) {
-      const dup = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderUpTo: qty });
+      const dup = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderQty: qty, expressQty });
       if (dup.status === 400) submitDuplicateRejected.add(1);
       else if (dup.status === 429) submitRateLimited.add(1);
       else if (dup.status >= 500) gameErrors.add(1);
