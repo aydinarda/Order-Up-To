@@ -98,10 +98,12 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         </p>
       )}
 
+      {/* On hand is NET inventory: negative means open backorders that the
+          next arrivals will fill first. */}
       <div className="inventory-strip">
         <div className="inventory-stat">
           <span className="inventory-label">On hand</span>
-          <span className="inventory-value">{onHand}</span>
+          <span className={`inventory-value${onHand < 0 ? " loss-text" : ""}`}>{onHand}</span>
         </div>
         <div className="inventory-stat">
           <span className="inventory-label">In transit</span>
@@ -109,7 +111,9 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         </div>
         <div className="inventory-stat">
           <span className="inventory-label">Inventory position</span>
-          <span className="inventory-value">{inventoryPosition}</span>
+          <span className={`inventory-value${inventoryPosition < 0 ? " loss-text" : ""}`}>
+            {inventoryPosition}
+          </span>
         </div>
       </div>
 

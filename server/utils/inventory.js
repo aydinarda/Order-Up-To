@@ -33,6 +33,15 @@
 // Purchase cost is charged at order time (q * unitCost), so end-of-game
 // leftovers are sunk — no salvage step.
 //
+// Backorders (not lost sales): unmet demand waits. `onHand` is NET inventory —
+// a negative value is the open backlog of customers still owed product. Every
+// arrival (pipeline or express) first clears that backlog, and only the rest
+// serves this round's demand. Revenue is booked on delivery, so a backordered
+// unit earns its price in the round it is finally shipped (never, if the game
+// ends first). Each round, every unit still backordered at the end of the round
+// costs config.backorderCost — the mirror image of holding cost, which (like
+// storage CO2) is charged only on positive stock.
+//
 // Delivery modes (the storyline's central trade-off): each round the player
 // can split the order across BOTH vehicles at once:
 //   - "consolidated" truck — big capacity, cheaper + lower CO2 per vehicle, but
@@ -41,7 +50,7 @@
 //     this round's demand from a stockout, but smaller capacity and strictly
 //     higher cost + CO2 per vehicle: more expensive and dirtier per kg.
 // The split only changes vehicle economics and arrival timing; everything else
-// (holding, storage CO2, lost sales) is identical.
+// (holding, storage CO2, backorders) is identical.
 //
 // Express never touches the pipeline: it lands immediately — even during a
 // shipping-delay event, which freezes only the consolidated pipeline. That
@@ -53,6 +62,8 @@ export const DEFAULT_CONFIG = {
   price: 40,
   unitCost: 10,
   holdingCost: 1,
+  // $ per unit still backordered at the end of a round.
+  backorderCost: 5,
   truckCapacity: 100,
   fixedCostPerTruck: 50,
   co2PerTruck: 100,
@@ -79,7 +90,7 @@ export function createInitialState(config = DEFAULT_CONFIG) {
 //   expressQty — units additionally shipped by express van this round (default
 //                0). Both vehicles can be used in the same round: `order` rides
 //                the consolidated truck, `expressQty` rides the express van.
-//   priming — round 1: no demand is realized, no sales, no lost sales
+//   priming — round 1: no demand is realized, no sales, no backorders
 //   delayed — a shared shipping-delay event hit this round: nothing arrives
 //             from the pipeline, nothing already in it advances, and this
 //             round's consolidated order is queued one slot deeper to
@@ -97,11 +108,21 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   // event freezes only the consolidated pipeline, never the direct van.
   const pipelineArrival = delayed ? 0 : state.pipeline[0] ?? 0;
   const arrival = pipelineArrival + expressQty;
-  const available = state.onHand + arrival;
 
-  const sold = priming ? 0 : Math.min(available, demand);
-  const lost = priming ? 0 : Math.max(0, demand - available);
-  const onHandEnd = available - sold;
+  // Arrivals first clear the backlog carried in from earlier rounds; whatever
+  // net stock remains serves this round's demand, and the shortfall is
+  // backordered (net inventory goes negative).
+  const backlogStart = Math.max(0, -state.onHand);
+  const net = state.onHand + arrival;
+  const backlogFilled = Math.min(backlogStart, arrival);
+  const roundDemand = priming ? 0 : demand;
+  const servedOnTime = Math.min(roundDemand, Math.max(0, net));
+  const newBackorders = roundDemand - servedOnTime;
+  const onHandEnd = net - roundDemand;
+  const stockEnd = Math.max(0, onHandEnd);
+  const backorderEnd = Math.max(0, -onHandEnd);
+  // Units shipped to customers this round (old backlog + today's demand).
+  const sold = backlogFilled + servedOnTime;
 
   const trucks = consolidatedQty > 0 ? Math.ceil(consolidatedQty / config.truckCapacity) : 0;
   const vans = expressQty > 0 ? Math.ceil(expressQty / config.expressCapacity) : 0;
@@ -127,12 +148,13 @@ export function advancePeriod(state, config, demand, order, options = {}) {
 
   const revenue = sold * config.price;
   const purchaseCost = orderQty * config.unitCost;
-  const holdingCost = onHandEnd * config.holdingCost;
+  const holdingCost = stockEnd * config.holdingCost;
+  const backorderCost = backorderEnd * (config.backorderCost ?? 0);
   const truckCost = trucks * config.fixedCostPerTruck + vans * config.expressFixedCost;
-  const profit = revenue - purchaseCost - holdingCost - truckCost;
+  const profit = revenue - purchaseCost - holdingCost - backorderCost - truckCost;
 
   const transportCo2 = trucks * config.co2PerTruck + vans * config.expressCo2;
-  const storageCo2 = onHandEnd * config.co2PerUnitHeld;
+  const storageCo2 = stockEnd * config.co2PerUnitHeld;
 
   // Total vehicle capacity dispatched this round — lets the leaderboard compute
   // an accurate fleet utilisation across a mix of consolidated + express legs.
@@ -153,7 +175,10 @@ export function advancePeriod(state, config, demand, order, options = {}) {
       arrival,
       demand: priming ? null : demand,
       sold,
-      lost,
+      servedOnTime,
+      newBackorders,
+      backlogFilled,
+      backorderEnd,
       onHandEnd,
       inTransitEnd: inTransitRemaining + consolidatedQty,
       inventoryPosition,
@@ -168,6 +193,7 @@ export function advancePeriod(state, config, demand, order, options = {}) {
       revenue,
       purchaseCost,
       holdingCost,
+      backorderCost,
       truckCost,
       profit,
       transportCo2,

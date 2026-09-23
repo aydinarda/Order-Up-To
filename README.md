@@ -1,6 +1,6 @@
 # Black Sea Gold: The Hazelnut Supply Challenge
 
-Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game, themed around a hazelnut cooperative distributing to a city hub. Students split an order quantity **across two delivery legs** each round against a shared randomized demand, with carry-over inventory, a delivery lead time (with an admin-configurable chance of a shared shipping delay event), transport CO₂ and storage CO₂; an admin controls the game flow round by round. Round 1 is a priming round: the warehouse starts empty and players place an opening order that arrives with a 1-round lead time. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂, and profit, service level, fleet utilisation and lost sales are shown as separate KPIs.
+Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game, themed around a hazelnut cooperative distributing to a city hub. Students split an order quantity **across two delivery legs** each round against a shared randomized demand, with carry-over inventory, backorders, a delivery lead time (with an admin-configurable chance of a shared shipping delay event), transport CO₂ and storage CO₂; an admin controls the game flow round by round. Round 1 is a priming round: the warehouse starts empty and players place an opening order that arrives with a 1-round lead time. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂, and profit, service level, fleet utilisation and backorders are shown as separate KPIs.
 
 ### Delivery legs (the core trade-off)
 
@@ -12,6 +12,14 @@ Each round the order can be split across both vehicles at once (either can be ze
 | **Express van** | Small (default 40 u) | **Same round** — can serve this round's demand | Higher cost **and** higher CO₂ per kg | Rescue a stockout that is happening right now — sparingly |
 
 Express lands the moment it is ordered (it never enters the pipeline, so even a shipping-delay event does not hold it up), but its smaller, pricier, dirtier vans make it strictly worse per kg — so leaning on it erodes both profit and the sustainability KPI.
+
+### Backorders
+
+Unmet demand is not lost — it is **backordered**. On-hand is net inventory and goes negative when customers are still owed product. Every arrival (truck or express) fills that backlog first, then serves the current round's demand.
+
+- **Revenue** is booked on delivery, i.e. in the round a backorder is finally filled. Units still owed when the game ends never earn revenue.
+- **Backorder penalty** (`backorderCost`, default $5): charged per unit still backordered at the end of each round — the mirror image of holding cost. Holding cost and storage CO₂ apply only to positive stock.
+- **Service level** is the fill rate: the share of demand served from stock on time. The **Backorders** KPI counts every unit that ever had to wait.
 
 ### Admin announcements
 

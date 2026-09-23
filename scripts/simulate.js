@@ -31,7 +31,7 @@ const distribution = { type: "normal", mean: 100, stdDev: 20 };
 function simulate(R, S, seed) {
   const rand = createRng(seed);
   let state = createInitialState(config);
-  const totals = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, lost: 0, demand: 0, trucks: 0, ordered: 0 };
+  const totals = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, backorders: 0, demand: 0, trucks: 0, ordered: 0 };
 
   for (let r = 0; r < rounds; r++) {
     const demand = sampleDemand(distribution, rand);
@@ -42,7 +42,7 @@ function simulate(R, S, seed) {
     totals.co2 += result.co2;
     totals.transportCo2 += result.transportCo2;
     totals.storageCo2 += result.storageCo2;
-    totals.lost += result.lost;
+    totals.backorders += result.newBackorders;
     totals.demand += demand;
     totals.trucks += result.trucks;
     totals.ordered += result.orderQty;
@@ -54,7 +54,7 @@ function simulate(R, S, seed) {
 const rows = [];
 for (const R of [1, 2, 3]) {
   for (let S = 200; S <= 700; S += 25) {
-    const acc = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, lost: 0, demand: 0, trucks: 0, ordered: 0 };
+    const acc = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, backorders: 0, demand: 0, trucks: 0, ordered: 0 };
     for (let rep = 0; rep < reps; rep++) {
       const t = simulate(R, S, 1000 + rep);
       for (const key of Object.keys(acc)) acc[key] += t[key];
@@ -67,7 +67,7 @@ for (const R of [1, 2, 3]) {
       co2: Math.round(acc.co2 / reps),
       truckCo2: Math.round(acc.transportCo2 / reps),
       storeCo2: Math.round(acc.storageCo2 / reps),
-      "lost%": Math.round((acc.lost / acc.demand) * 1000) / 10,
+      "bo%": Math.round((acc.backorders / acc.demand) * 1000) / 10,
       trucks: Math.round((acc.trucks / reps) * 10) / 10,
       "fill%": acc.trucks > 0 ? Math.round((acc.ordered / (acc.trucks * config.truckCapacity)) * 100) : null
     });

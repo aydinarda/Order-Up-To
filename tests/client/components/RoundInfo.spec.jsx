@@ -8,6 +8,7 @@ const config = {
   price: 40,
   unitCost: 10,
   holdingCost: 1,
+  backorderCost: 5,
   truckCapacity: 100,
   fixedCostPerTruck: 50,
   co2PerTruck: 100,
@@ -31,6 +32,8 @@ describe("RoundInfo", () => {
     expect(screen.getByText("Express van")).toBeInTheDocument();
     expect(screen.getByText("Storage & risk")).toBeInTheDocument();
     expect(screen.getByText("$40")).toBeInTheDocument();
+    expect(screen.getByText("Backorder")).toBeInTheDocument();
+    expect(screen.getByText("$5/u")).toBeInTheDocument();
     expect(screen.getByText("2 rounds")).toBeInTheDocument();
     // Consolidated CO₂ chip value.
     expect(screen.getByText("100 kg")).toBeInTheDocument();

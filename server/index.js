@@ -32,8 +32,10 @@ function calculateLeaderboard(players, config) {
       (acc, entry) => ({
         profit: acc.profit + entry.profit,
         co2: acc.co2 + entry.co2,
-        lost: acc.lost + entry.lost,
-        sold: acc.sold + entry.sold,
+        // The priming round carries demand: null, so it adds nothing here.
+        demand: acc.demand + (entry.demand ?? 0),
+        onTime: acc.onTime + (entry.servedOnTime ?? 0),
+        backorders: acc.backorders + (entry.newBackorders ?? 0),
         // `vehicles` counts both consolidated trucks and express vans of a
         // round; older history entries only carry `trucks`.
         trucks: acc.trucks + (entry.vehicles ?? entry.trucks),
@@ -42,20 +44,19 @@ function calculateLeaderboard(players, config) {
         // a player mixes consolidated trucks and (smaller) express vans.
         capacityUnits: acc.capacityUnits + (entry.capacityUnits ?? entry.trucks * config.truckCapacity)
       }),
-      { profit: 0, co2: 0, lost: 0, sold: 0, trucks: 0, ordered: 0, capacityUnits: 0 }
+      { profit: 0, co2: 0, demand: 0, onTime: 0, backorders: 0, trucks: 0, ordered: 0, capacityUnits: 0 }
     );
-    // Service level: share of demand actually fulfilled (sold / (sold + lost)).
-    // The priming round contributes neither (no demand), so it's excluded naturally.
-    const demandSeen = totals.sold + totals.lost;
 
     return {
       nickname: player.nickname,
       cumulativeProfit: totals.profit,
       cumProfit: totals.profit,
       cumCo2: totals.co2,
-      cumLost: totals.lost,
+      // Total units that ever went on backorder (not the currently open backlog).
+      cumBackorders: totals.backorders,
       cumTrucks: totals.trucks,
-      serviceLevelPct: demandSeen > 0 ? (totals.sold / demandSeen) * 100 : null,
+      // Service level = fill rate: share of demand served from stock on time.
+      serviceLevelPct: totals.demand > 0 ? (totals.onTime / totals.demand) * 100 : null,
       truckFillPct: totals.capacityUnits > 0 ? (totals.ordered / totals.capacityUnits) * 100 : null,
       leftover: player.inventory.onHand + player.inventory.pipeline.reduce((s, q) => s + q, 0),
       roundsPlayed: player.history.length
@@ -76,6 +77,7 @@ const CONFIG_FIELDS = {
   price: { integer: false, min: 0.01 },
   unitCost: { integer: false, min: 0 },
   holdingCost: { integer: false, min: 0 },
+  backorderCost: { integer: false, min: 0 },
   truckCapacity: { integer: true, min: 1 },
   fixedCostPerTruck: { integer: false, min: 0 },
   co2PerTruck: { integer: false, min: 0 },
@@ -711,7 +713,9 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         submittedAt: order ? order.submittedAt : null,
         arrival: result.arrival,
         sold: result.sold,
-        lost: result.lost,
+        backordered: result.newBackorders,
+        backorderEnd: result.backorderEnd,
+        backorderCost: result.backorderCost,
         onHandEnd: result.onHandEnd,
         inTransit: result.inTransitEnd,
         trucks: result.vehicles,

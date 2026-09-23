@@ -8,13 +8,16 @@ describe("RoundResult", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("shows the order/sales breakdown, lost sales, CO2 and profit", () => {
+  it("shows the order/sales breakdown, backorders, CO2 and profit", () => {
     const result = {
       arrival: 40,
       realizedDemand: 95,
       sold: 95,
-      lost: 5,
-      onHandEnd: 20,
+      servedOnTime: 90,
+      backlogFilled: 5,
+      newBackorders: 7,
+      backorderEnd: 7,
+      onHandEnd: -7,
       orderQty: 150,
       consolidatedQty: 110,
       expressQty: 40,
@@ -23,7 +26,8 @@ describe("RoundResult", () => {
       truckFillPct: 75,
       revenue: 3800,
       purchaseCost: 1500,
-      holdingCost: 20,
+      holdingCost: 0,
+      backorderCost: 35,
       truckCost: 220,
       transportCo2: 450,
       storageCo2: 10,
@@ -35,7 +39,12 @@ describe("RoundResult", () => {
     expect(screen.getByText("Round Result")).toBeInTheDocument();
     expect(screen.getByText("Order placed (q)")).toBeInTheDocument();
     expect(screen.getByText("150")).toBeInTheDocument();
-    expect(screen.getByText("Lost sales")).toBeInTheDocument();
+    expect(screen.getByText("Backorders filled")).toBeInTheDocument();
+    expect(screen.getByText("New backorders")).toBeInTheDocument();
+    expect(screen.getByText("Open backorders")).toBeInTheDocument();
+    expect(screen.getByText("-7")).toBeInTheDocument(); // negative net on-hand
+    expect(screen.getByText("Backorder penalty")).toBeInTheDocument();
+    expect(screen.getByText("$35")).toBeInTheDocument();
     // Both legs of the mixed order are itemised.
     expect(screen.getByText(/110 kg · 2 trucks/)).toBeInTheDocument();
     expect(screen.getByText(/40 kg · 1 van/)).toBeInTheDocument();
@@ -51,7 +60,7 @@ describe("RoundResult", () => {
       arrival: 0,
       realizedDemand: 10,
       sold: 10,
-      lost: 0,
+      newBackorders: 0,
       onHandEnd: 5,
       orderQty: 80,
       mode: "express",

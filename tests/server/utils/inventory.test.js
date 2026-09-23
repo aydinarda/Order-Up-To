@@ -23,7 +23,7 @@ test("priming round: no sales, opening order arrives with lead time 1", () => {
   assert.equal(result.priming, true);
   assert.equal(result.demand, null);
   assert.equal(result.sold, 0);
-  assert.equal(result.lost, 0);
+  assert.equal(result.newBackorders, 0);
   assert.equal(result.orderQty, 150);
   assert.equal(result.trucks, 2);
   // Opening order sits at pipeline[0] -> arrives next round.
@@ -56,13 +56,20 @@ test("a normal order placed in round t arrives exactly at the start of round t+L
   assert.equal(step.nextState.onHand, 100);
 });
 
-test("lost sales: unmet demand is lost, not backordered", () => {
+test("unmet demand is backordered: on-hand goes negative and the penalty accrues", () => {
   const state = { onHand: 50, pipeline: [0, 0] };
   const { nextState, result } = advancePeriod(state, config, 80, 0);
   assert.equal(result.sold, 50);
-  assert.equal(result.lost, 30);
-  assert.equal(result.onHandEnd, 0);
-  assert.equal(nextState.onHand, 0);
+  assert.equal(result.servedOnTime, 50);
+  assert.equal(result.newBackorders, 30);
+  assert.equal(result.backorderEnd, 30);
+  assert.equal(result.onHandEnd, -30);
+  assert.equal(nextState.onHand, -30);
+  // No stock left: no holding cost or storage CO2, only the backorder penalty.
+  assert.equal(result.holdingCost, 0);
+  assert.equal(result.storageCo2, 0);
+  assert.equal(result.backorderCost, 30 * config.backorderCost);
+  assert.equal(result.profit, 50 * config.price - 30 * config.backorderCost);
 });
 
 test("arrival is available to serve the same period's demand", () => {
@@ -70,7 +77,7 @@ test("arrival is available to serve the same period's demand", () => {
   const { result } = advancePeriod(state, config, 45, 0);
   assert.equal(result.arrival, 40);
   assert.equal(result.sold, 45);
-  assert.equal(result.lost, 0);
+  assert.equal(result.newBackorders, 0);
   assert.equal(result.onHandEnd, 5);
 });
 
@@ -172,7 +179,8 @@ test("a delayed round delivers nothing, even if a shipment was due", () => {
   assert.equal(result.delayed, true);
   assert.equal(result.arrival, 0); // the due shipment does NOT arrive
   assert.equal(result.sold, 20); // only pre-existing on-hand can be sold
-  assert.equal(result.lost, 30);
+  assert.equal(result.newBackorders, 30);
+  assert.equal(nextState.onHand, -30);
   // Nothing shifted: the 80 units are still exactly one round away.
   assert.deepEqual(nextState.pipeline, [80, 0, 0]);
 });
@@ -340,7 +348,7 @@ test("express serves this round's demand — a same-round stockout rescue", () =
   const { result, nextState } = advancePeriod(state, longer, 30, 0, { expressQty: 40 });
   assert.equal(result.arrival, 40);
   assert.equal(result.sold, 30);
-  assert.equal(result.lost, 0);
+  assert.equal(result.newBackorders, 0);
   assert.equal(nextState.onHand, 10); // the unsold remainder is held
 });
 
@@ -368,4 +376,60 @@ test("capacityUnits and fill reflect the combined dispatched fleet", () => {
   const mixed = advancePeriod(state, config, 0, 250, { expressQty: 90 }).result;
   assert.equal(mixed.capacityUnits, 3 * config.truckCapacity + 3 * config.expressCapacity);
   assert.equal(mixed.truckFillPct, (340 / 420) * 100);
+});
+
+// ── Backorders ─────────────────────────────────────────────────────────────
+// Net on-hand goes negative when demand is unmet. Arrivals fill the backlog
+// before serving new demand, revenue is booked on delivery, and every unit
+// still backordered at round end costs config.backorderCost.
+
+test("arrivals clear the open backlog before serving new demand", () => {
+  const state = { onHand: -30, pipeline: [50, 0, 0] };
+  const { result } = advancePeriod(state, config, 40, 0);
+  assert.equal(result.arrival, 50);
+  assert.equal(result.backlogFilled, 30);
+  assert.equal(result.servedOnTime, 20);
+  assert.equal(result.newBackorders, 20);
+  assert.equal(result.sold, 50); // 30 old backorders + 20 of today's demand
+  assert.equal(result.revenue, 50 * config.price);
+  assert.equal(result.onHandEnd, -20);
+  assert.equal(result.backorderCost, 20 * config.backorderCost);
+});
+
+test("a backlog accrues the penalty every round until it is filled", () => {
+  let state = { onHand: -30, pipeline: [0, 40, 0] };
+
+  // Nothing arrives: the 30 owed units wait another round and cost the penalty.
+  let step = advancePeriod(state, config, 0, 0);
+  assert.equal(step.result.sold, 0);
+  assert.equal(step.result.revenue, 0);
+  assert.equal(step.result.backorderEnd, 30);
+  assert.equal(step.result.backorderCost, 30 * config.backorderCost);
+  state = step.nextState;
+
+  // 40 arrive: the backlog ships (and earns its revenue now), 10 go to stock.
+  step = advancePeriod(state, config, 0, 0);
+  assert.equal(step.result.backlogFilled, 30);
+  assert.equal(step.result.sold, 30);
+  assert.equal(step.result.revenue, 30 * config.price);
+  assert.equal(step.result.onHandEnd, 10);
+  assert.equal(step.result.backorderCost, 0);
+  assert.equal(step.result.holdingCost, 10 * config.holdingCost);
+});
+
+test("an express van fills a backlog within the same round", () => {
+  const state = { onHand: -25, pipeline: [0, 0, 0] };
+  const { result } = advancePeriod(state, config, 10, 0, { expressQty: 40 });
+  assert.equal(result.backlogFilled, 25);
+  assert.equal(result.servedOnTime, 10);
+  assert.equal(result.newBackorders, 0);
+  assert.equal(result.sold, 35);
+  assert.equal(result.onHandEnd, 5);
+});
+
+test("inventory position nets the open backlog against what is in transit", () => {
+  const state = { onHand: 0, pipeline: [0, 100, 0] };
+  const { result } = advancePeriod(state, config, 30, 0);
+  assert.equal(result.onHandEnd, -30);
+  assert.equal(result.inventoryPosition, 70); // -30 owed + 100 inbound
 });

@@ -39,6 +39,7 @@ const CONFIG_FIELD_DEFS = [
   { key: "price", label: "Price ($/unit)" },
   { key: "unitCost", label: "Unit cost ($/unit)" },
   { key: "holdingCost", label: "Holding ($/unit/round)" },
+  { key: "backorderCost", label: "Backorder penalty ($/unit/round)" },
   { key: "truckCapacity", label: "Truck capacity (units)" },
   { key: "fixedCostPerTruck", label: "Truck cost ($/truck)" },
   { key: "co2PerTruck", label: "CO₂ per truck (kg)" },
@@ -110,19 +111,21 @@ function App() {
     [history]
   );
 
-  // Cumulative service level = share of demand met from stock. The priming round
+  // Cumulative service level = fill rate: share of demand served from stock on
+  // time. Backorders count every unit that ever had to wait. The priming round
   // has no demand, so it contributes nothing to either total.
-  const { cumulativeLost, serviceLevelPct } = useMemo(() => {
-    let sold = 0;
-    let lost = 0;
+  const { cumulativeBackorders, serviceLevelPct } = useMemo(() => {
+    let demand = 0;
+    let onTime = 0;
+    let backorders = 0;
     for (const row of history) {
-      sold += row.sold || 0;
-      lost += row.lost || 0;
+      demand += row.demand || 0;
+      onTime += row.servedOnTime || 0;
+      backorders += row.newBackorders || 0;
     }
-    const demandSeen = sold + lost;
     return {
-      cumulativeLost: lost,
-      serviceLevelPct: demandSeen > 0 ? (sold / demandSeen) * 100 : null
+      cumulativeBackorders: backorders,
+      serviceLevelPct: demand > 0 ? (onTime / demand) * 100 : null
     };
   }, [history]);
 
@@ -949,9 +952,9 @@ function App() {
             {serviceLevelPct != null ? `${Math.round(serviceLevelPct)}%` : "—"}
           </strong>
         </div>
-        <div className="kpi-tile kpi-lost">
-          <span className="kpi-label">Lost sales</span>
-          <strong className="kpi-value">{cumulativeLost}</strong>
+        <div className="kpi-tile kpi-backorders">
+          <span className="kpi-label">Backorders</span>
+          <strong className="kpi-value">{cumulativeBackorders}</strong>
         </div>
         <div className="kpi-tile kpi-co2">
           <span className="kpi-label">Cumulative CO₂</span>

@@ -48,7 +48,9 @@ create table if not exists orders (
   delivery_mode text,
   arrival int,
   sold int,
-  lost int,
+  backordered int,
+  backorder_end int,
+  backorder_cost numeric(12,2),
   on_hand_end int,
   in_transit int,
   trucks int,
@@ -58,6 +60,13 @@ create table if not exists orders (
   submitted_at timestamptz,
   unique (game_id, tur_no, round_id, player_id)
 );
+
+-- Backorder model migration for databases created before it: unmet demand is
+-- now backordered instead of lost (on_hand_end can go negative). The old
+-- `lost` column, if present, is no longer written.
+alter table orders add column if not exists backordered int;
+alter table orders add column if not exists backorder_end int;
+alter table orders add column if not exists backorder_cost numeric(12,2);
 
 create table if not exists session_events (
   id uuid primary key default gen_random_uuid(),

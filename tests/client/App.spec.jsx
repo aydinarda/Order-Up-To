@@ -65,6 +65,7 @@ const config = {
   price: 40,
   unitCost: 10,
   holdingCost: 1,
+  backorderCost: 5,
   truckCapacity: 100,
   fixedCostPerTruck: 50,
   co2PerTruck: 100,

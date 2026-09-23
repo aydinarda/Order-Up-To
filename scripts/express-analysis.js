@@ -5,7 +5,7 @@
 // it by consolidated truck (cheap, arrives in L) or by express van (dear +
 // dirty, lands within the same round)?" We simulate one player from a given
 // starting situation down two branches that differ ONLY in the round-0 vehicle,
-// on the SAME demand draws, then compare (profit, CO2, lost).
+// on the SAME demand draws, then compare (profit, CO2, backorders).
 //
 // Verdict uses the exact leaderboard dominance rule (maximize profit, minimize CO2):
 //   - express DOMINATED  → strictly worse profit AND CO2 → a bad call (waste).
@@ -14,7 +14,8 @@
 //
 // Pedagogical claim under test: express should be a bad call when you are well
 // stocked or when L = 1 (no timing gain), and a rational profit-saving trade-off
-// when your trucks arrive late (high L) and a stockout would otherwise book losses.
+// when your trucks arrive late (high L) and a stockout would otherwise pile up
+// backorder penalties.
 //
 // Usage: node scripts/express-analysis.js [--reps 800] [--horizon 0=auto]
 // The engine and dominance rule are the SAME modules the live game uses.
@@ -31,9 +32,9 @@ function arg(name, fallback) {
 const MU = 100;
 const SIGMA = 20;
 const distribution = { type: "normal", mean: MU, stdDev: SIGMA };
-// Critical ratio with the default margins: Cu = price-unitCost = 30, Co = holding
-// = 1 → CR = 30/31 ≈ 0.968 → z ≈ 1.85. The high-service base-stock target.
-const Z = 1.85;
+// Critical ratio of the backorder model: Cu = backorder penalty = 5, Co = holding
+// = 1 → CR = 5/6 ≈ 0.833 → z ≈ 0.97. The base-stock target.
+const Z = 0.97;
 const REPS = arg("reps", 800);
 
 const baseStock = (L) => Math.round((L + 1) * MU + Z * Math.sqrt(L + 1) * SIGMA);
@@ -56,7 +57,7 @@ function verdict(A, B) {
 function runBranch({ config, L, S, onHand, round0Mode, horizon, seed }) {
   const rand = createRng(seed);
   let state = { onHand, pipeline: Array.from({ length: L + 1 }, () => 0) };
-  const t = { profit: 0, co2: 0, lost: 0 };
+  const t = { profit: 0, co2: 0, backorders: 0 };
 
   for (let r = 0; r < horizon; r++) {
     const demand = sampleDemand(distribution, rand);
@@ -72,7 +73,7 @@ function runBranch({ config, L, S, onHand, round0Mode, horizon, seed }) {
     state = nextState;
     t.profit += result.profit;
     t.co2 += result.co2;
-    t.lost += result.lost;
+    t.backorders += result.newBackorders;
   }
   return t;
 }
@@ -89,15 +90,15 @@ function compare({ L, expressFixedCost, onHand }) {
   const S = baseStock(L);
   const horizon = L + 4;
   const acc = {
-    A: { profit: 0, co2: 0, lost: 0 },
-    B: { profit: 0, co2: 0, lost: 0 }
+    A: { profit: 0, co2: 0, backorders: 0 },
+    B: { profit: 0, co2: 0, backorders: 0 }
   };
 
   for (let rep = 0; rep < REPS; rep++) {
     const seed = 1000 + rep;
     const A = runBranch({ config, L, S, onHand, round0Mode: "consolidated", horizon, seed });
     const B = runBranch({ config, L, S, onHand, round0Mode: "express", horizon, seed });
-    for (const k of ["profit", "co2", "lost"]) {
+    for (const k of ["profit", "co2", "backorders"]) {
       acc.A[k] += A[k];
       acc.B[k] += B[k];
     }
@@ -105,7 +106,7 @@ function compare({ L, expressFixedCost, onHand }) {
 
   const A = {};
   const B = {};
-  for (const k of ["profit", "co2", "lost"]) {
+  for (const k of ["profit", "co2", "backorders"]) {
     A[k] = acc.A[k] / REPS;
     B[k] = acc.B[k] / REPS;
   }
@@ -114,7 +115,7 @@ function compare({ L, expressFixedCost, onHand }) {
     S,
     dProfit: Math.round(B.profit - A.profit),
     dCo2: Math.round(B.co2 - A.co2),
-    dLost: Math.round(B.lost - A.lost),
+    dBackorders: Math.round(B.backorders - A.backorders),
     verdict: verdict(A, B)
   };
 }
@@ -149,7 +150,7 @@ for (const s of scenarios) {
       "onHand→S": `${onHand}→${r.S}`,
       "Δprofit": r.dProfit,
       "ΔCO₂(kg)": r.dCo2,
-      "Δlost(u)": r.dLost,
+      "Δbackorders(u)": r.dBackorders,
       verdict: r.verdict
     });
   }
@@ -167,7 +168,7 @@ for (const L of [2, 4]) {
       expressFixedCost,
       "Δprofit": r.dProfit,
       "ΔCO₂(kg)": r.dCo2,
-      "Δlost(u)": r.dLost,
+      "Δbackorders(u)": r.dBackorders,
       verdict: r.verdict
     });
   }

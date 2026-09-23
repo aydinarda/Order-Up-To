@@ -20,12 +20,13 @@ test("set-config updates economy fields for an admin", async () => {
 
   const res = await request(app)
     .post("/set-config")
-    .send({ gameId, adminToken, price: 50, unitCost: 12, truckCapacity: 150 });
+    .send({ gameId, adminToken, price: 50, unitCost: 12, truckCapacity: 150, backorderCost: 8 });
 
   assert.equal(res.status, 200);
   assert.equal(res.body.config.price, 50);
   assert.equal(res.body.config.unitCost, 12);
   assert.equal(res.body.config.truckCapacity, 150);
+  assert.equal(res.body.config.backorderCost, 8);
   // Untouched fields keep their defaults.
   assert.equal(res.body.config.holdingCost, 1);
 });

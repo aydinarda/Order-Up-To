@@ -46,11 +46,22 @@ function RoundResult({ result }) {
         <p>Sold units</p>
         <strong>{result.sold}</strong>
 
-        <p>Lost sales</p>
-        <strong className={result.lost > 0 ? "loss-text" : undefined}>{result.lost}</strong>
+        <p>Backorders filled</p>
+        <strong>{result.backlogFilled}</strong>
 
+        <p>New backorders</p>
+        <strong className={result.newBackorders > 0 ? "loss-text" : undefined}>
+          {result.newBackorders}
+        </strong>
+
+        <p>Open backorders</p>
+        <strong className={result.backorderEnd > 0 ? "loss-text" : undefined}>
+          {result.backorderEnd}
+        </strong>
+
+        {/* Net inventory: negative means customers are still owed product. */}
         <p>Ending on-hand</p>
-        <strong>{result.onHandEnd}</strong>
+        <strong className={result.onHandEnd < 0 ? "loss-text" : undefined}>{result.onHandEnd}</strong>
 
         <p>Order placed (q)</p>
         <strong>{result.orderQty}</strong>
@@ -82,6 +93,9 @@ function RoundResult({ result }) {
 
         <p>Holding cost</p>
         <strong>{toCurrency(result.holdingCost)}</strong>
+
+        <p>Backorder penalty</p>
+        <strong>{toCurrency(result.backorderCost)}</strong>
 
         <p>Transport cost</p>
         <strong>{toCurrency(result.truckCost)}</strong>
