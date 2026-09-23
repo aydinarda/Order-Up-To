@@ -60,6 +60,24 @@ describe("OrderForm", () => {
     expect(screen.getByText(/total order: 340 kg/i)).toBeInTheDocument();
   });
 
+  it("lists the fixed cost per vehicle, plus the per-unit cost once it is above zero", () => {
+    const { rerender } = render(
+      <OrderForm onSubmit={vi.fn()} disabled={false} onHand={0} inTransit={0} config={config} />
+    );
+    expect(screen.getByText(/\$50\/ship · 100 kg CO₂\/ship/)).toBeInTheDocument();
+
+    rerender(
+      <OrderForm
+        onSubmit={vi.fn()}
+        disabled={false}
+        onHand={0}
+        inTransit={0}
+        config={{ ...config, shipCostPerUnit: 0.5 }}
+      />
+    );
+    expect(screen.getByText(/\$50\/ship \+ \$0\.5\/u · 100 kg CO₂\/ship/)).toBeInTheDocument();
+  });
+
   it("hides the truck leg and submits ship-only while the truck is switched off", async () => {
     const onSubmit = vi.fn();
     render(

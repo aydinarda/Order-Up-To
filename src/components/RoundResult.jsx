@@ -100,8 +100,17 @@ function RoundResult({ result, expressEnabled = false }) {
         <p>Backorder penalty</p>
         <strong>{toCurrency(result.backorderCost)}</strong>
 
+        {/* Split out once a per-unit shipping cost is in play. */}
         <p>Transport cost</p>
-        <strong>{toCurrency(result.transportCost)}</strong>
+        <strong>
+          {toCurrency(result.transportCost)}
+          {result.transportVariableCost > 0 && (
+            <span className="cost-split">
+              {" "}
+              ({toCurrency(result.transportFixedCost)} fixed + {toCurrency(result.transportVariableCost)} per unit)
+            </span>
+          )}
+        </strong>
 
         <p>Transport CO₂</p>
         <strong>{formatCo2(result.transportCo2)}</strong>

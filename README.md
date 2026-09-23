@@ -11,6 +11,8 @@ Each round the order can be split across both vehicles at once (either can be ze
 | **Ship** 🚢 | Large (default 100 u) | Full configured `L` | Cheaper + lower CO₂ per vehicle | Default; efficient when you can plan ahead |
 | **Truck** 🚚 | Small (default 40 u) | **Same round** — can serve this round's demand | Higher cost **and** higher CO₂ per kg | Rescue a stockout that is happening right now — sparingly |
 
+Each leg's transport cost is a **fixed cost per vehicle** (`shipCost`, `expressFixedCost`) plus an optional **per-unit shipping cost** on every unit it carries (`shipCostPerUnit`, `expressCostPerUnit`, both default $0 — tune them in the admin panel). The per-unit part only shows up in the players' view once it is above zero.
+
 The truck lands the moment it is ordered (it never enters the pipeline, so even a shipping-delay event does not hold it up), but its smaller, pricier, dirtier vehicles make it strictly worse per kg — so leaning on it erodes both profit and the sustainability KPI.
 
 **The truck is off by default.** The admin switches it on or off between rounds with *Fast truck available* in the admin panel (`expressEnabled` in the config API); its capacity, cost and CO₂ fields only appear while it is on. While it is off, the truck leg is hidden from players, truck orders are rejected, and players who skip a round do not repeat an earlier truck order. Internally the ship is the `consolidated` leg and the truck the `express` leg (`expressQty`, `expressCapacity`, …).

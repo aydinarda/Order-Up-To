@@ -43,6 +43,22 @@ describe("RoundInfo", () => {
     expect(screen.getByText("250 kg")).toBeInTheDocument();
   });
 
+  it("shows a per-unit shipping cost chip only once it is above zero", () => {
+    const { rerender } = render(<RoundInfo round={round} totalRounds={12} config={config} />);
+    expect(screen.queryByText("Per unit")).toBeNull();
+
+    rerender(
+      <RoundInfo
+        round={round}
+        totalRounds={12}
+        config={{ ...config, shipCostPerUnit: 0.5, expressCostPerUnit: 2 }}
+      />
+    );
+    expect(screen.getAllByText("Per unit")).toHaveLength(2);
+    expect(screen.getByText("$0.5/u")).toBeInTheDocument();
+    expect(screen.getByText("$2/u")).toBeInTheDocument();
+  });
+
   it("hides the truck chip group while the truck is switched off", () => {
     render(<RoundInfo round={round} totalRounds={12} config={{ ...config, expressEnabled: false }} />);
     expect(screen.getByText("Ship")).toBeInTheDocument();

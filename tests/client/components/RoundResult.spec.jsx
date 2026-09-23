@@ -55,6 +55,35 @@ describe("RoundResult", () => {
     expect(screen.getByText(/460 kg/)).toBeInTheDocument();
   });
 
+  it("splits the transport cost into fixed and per-unit parts when a per-unit cost applies", () => {
+    const result = {
+      arrival: 0,
+      sold: 0,
+      newBackorders: 0,
+      onHandEnd: 0,
+      orderQty: 100,
+      consolidatedQty: 100,
+      expressQty: 0,
+      ships: 1,
+      expressTrucks: 0,
+      fleetFillPct: 100,
+      revenue: 0,
+      purchaseCost: 1000,
+      holdingCost: 0,
+      backorderCost: 0,
+      transportFixedCost: 50,
+      transportVariableCost: 25,
+      transportCost: 75,
+      transportCo2: 100,
+      storageCo2: 0,
+      profit: -1075,
+      co2: 100
+    };
+    render(<RoundResult result={result} />);
+    expect(screen.getByText("$75")).toBeInTheDocument();
+    expect(screen.getByText(/\(\$50 fixed \+ \$25 per unit\)/)).toBeInTheDocument();
+  });
+
   it("hides the truck row while the truck is off and unused", () => {
     const result = {
       arrival: 0,

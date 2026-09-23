@@ -42,6 +42,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
           word: "ship",
           cap: config.shipCapacity,
           cost: config.shipCost,
+          unitCost: config.shipCostPerUnit ?? 0,
           co2: config.shipCo2,
           lead: shipLead,
           qty: parsedShip,
@@ -58,6 +59,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
                 word: "truck",
                 cap: config.expressCapacity,
                 cost: config.expressFixedCost,
+                unitCost: config.expressCostPerUnit ?? 0,
                 co2: config.expressCo2,
                 lead: 0, // same-round arrival
                 qty: parsedExpress,
@@ -138,7 +140,8 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
                   {leg.cap} u/{leg.word} · {leg.arrivalText}
                 </span>
                 <span className="delivery-mode-detail">
-                  ${leg.cost} · {leg.co2} kg CO₂ each
+                  ${leg.cost}/{leg.word}
+                  {leg.unitCost > 0 ? ` + $${leg.unitCost}/u` : ""} · {leg.co2} kg CO₂/{leg.word}
                 </span>
                 <label htmlFor={`order-qty-${leg.id}`}>
                   {leg.label} quantity (kg)

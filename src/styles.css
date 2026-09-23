@@ -696,6 +696,13 @@ button.danger:hover {
   color: #ba2f2f;
 }
 
+/* Fixed vs per-unit breakdown next to a round's transport cost. */
+.cost-split {
+  font-weight: 400;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
 .muted-text {
   color: var(--muted);
   font-size: 0.9rem;

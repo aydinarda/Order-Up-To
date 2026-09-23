@@ -35,7 +35,10 @@ function ConfigDetail({ config }) {
         chips={[
           { label: "Lead time", value: `${config.leadTime} rounds` },
           { label: "Capacity", value: `${config.shipCapacity} u` },
-          { label: "Cost", value: `$${config.shipCost}` },
+          { label: "Fixed cost", value: `$${config.shipCost}` },
+          ...(config.shipCostPerUnit > 0
+            ? [{ label: "Per unit", value: `$${config.shipCostPerUnit}/u` }]
+            : []),
           { label: "CO₂", value: `${config.shipCo2} kg` }
         ]}
       />
@@ -45,7 +48,10 @@ function ConfigDetail({ config }) {
           chips={[
             { label: "Lead time", value: "Same round" },
             { label: "Capacity", value: `${config.expressCapacity} u` },
-            { label: "Cost", value: `$${config.expressFixedCost}` },
+            { label: "Fixed cost", value: `$${config.expressFixedCost}` },
+            ...(config.expressCostPerUnit > 0
+              ? [{ label: "Per unit", value: `$${config.expressCostPerUnit}/u` }]
+              : []),
             { label: "CO₂", value: `${config.expressCo2} kg` }
           ]}
         />

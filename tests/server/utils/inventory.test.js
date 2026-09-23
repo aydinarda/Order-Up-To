@@ -364,6 +364,28 @@ test("a delayed round freezes the pipeline but not the express truck", () => {
   assert.equal(nextState.onHand, 40);
 });
 
+test("per-unit shipping cost is charged on every unit of each leg, on top of the fixed cost", () => {
+  const priced = { ...config, shipCostPerUnit: 2, expressCostPerUnit: 3 };
+  const state = createInitialState(priced);
+  // 250 by ship -> 3 ships; 90 by truck -> 3 trucks.
+  const { result } = advancePeriod(state, priced, 0, 250, { expressQty: 90 });
+  assert.equal(result.transportFixedCost, 3 * priced.shipCost + 3 * priced.expressFixedCost);
+  assert.equal(result.transportVariableCost, 250 * 2 + 90 * 3);
+  assert.equal(result.transportCost, result.transportFixedCost + result.transportVariableCost);
+  assert.equal(
+    result.profit,
+    -(340 * priced.unitCost) - 90 * priced.holdingCost - result.transportCost
+  );
+});
+
+test("per-unit shipping cost defaults to zero: transport cost is the fixed part only", () => {
+  const { result } = advancePeriod(createInitialState(config), config, 0, 150);
+  assert.equal(config.shipCostPerUnit, 0);
+  assert.equal(config.expressCostPerUnit, 0);
+  assert.equal(result.transportVariableCost, 0);
+  assert.equal(result.transportCost, 2 * config.shipCost);
+});
+
 test("capacityUnits and fill reflect the combined dispatched fleet", () => {
   const state = createInitialState(config);
   // 50 express units over 40-unit trucks -> 2 trucks, 80 capacity, 62.5% full.

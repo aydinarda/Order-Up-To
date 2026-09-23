@@ -300,6 +300,25 @@ test("set-config accepts express truck economy fields", async () => {
   assert.equal(res.body.config.expressCo2, 300);
 });
 
+test("set-config accepts per-unit shipping costs for both legs and rejects negatives", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, config } = await createGame(app);
+  assert.equal(config.shipCostPerUnit, 0);
+  assert.equal(config.expressCostPerUnit, 0);
+
+  const res = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, shipCostPerUnit: 0.5, expressCostPerUnit: 2 });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.config.shipCostPerUnit, 0.5);
+  assert.equal(res.body.config.expressCostPerUnit, 2);
+
+  const negative = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, shipCostPerUnit: -1 });
+  assert.equal(negative.status, 400);
+});
+
 test("submit-order rejects an unknown delivery mode", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, playerId } = await createGame(app);

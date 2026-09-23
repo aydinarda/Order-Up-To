@@ -79,6 +79,7 @@ const CONFIG_FIELDS = {
   backorderCost: { integer: false, min: 0 },
   shipCapacity: { integer: true, min: 1 },
   shipCost: { integer: false, min: 0 },
+  shipCostPerUnit: { integer: false, min: 0 },
   shipCo2: { integer: false, min: 0 },
   co2PerUnitHeld: { integer: false, min: 0 },
   // Express truck on/off plus its economics. Not preGameOnly — the truck
@@ -87,6 +88,7 @@ const CONFIG_FIELDS = {
   expressEnabled: { boolean: true },
   expressCapacity: { integer: true, min: 1 },
   expressFixedCost: { integer: false, min: 0 },
+  expressCostPerUnit: { integer: false, min: 0 },
   expressCo2: { integer: false, min: 0 },
   // Chance per round of a shared shipping-delay event (heavy rain, port
   // congestion, ...): freezes every player's pipeline for that round alike.

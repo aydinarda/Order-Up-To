@@ -52,6 +52,10 @@
 // The split only changes vehicle economics and arrival timing; everything else
 // (holding, storage CO2, backorders) is identical.
 //
+// Transport cost per leg = a fixed cost per vehicle dispatched (economies of
+// scale: fill the vehicle) + a per-unit shipping cost on every unit it carries
+// (shipCostPerUnit / expressCostPerUnit, both 0 by default).
+//
 // The express truck never touches the pipeline: it lands immediately — even
 // during a shipping-delay event, which freezes only the ship pipeline. That
 // guaranteed immediacy is exactly what its premium buys.
@@ -68,7 +72,8 @@ export const DEFAULT_CONFIG = {
   // $ per unit still backordered at the end of a round.
   backorderCost: 5,
   shipCapacity: 100,
-  shipCost: 50,
+  shipCost: 50, // $ per ship dispatched
+  shipCostPerUnit: 0, // $ per unit carried by ship
   shipCo2: 100,
   co2PerUnitHeld: 0.5,
   delayProbability: 0,
@@ -77,7 +82,8 @@ export const DEFAULT_CONFIG = {
   // sustainability KPI.
   expressEnabled: false,
   expressCapacity: 40,
-  expressFixedCost: 120,
+  expressFixedCost: 120, // $ per truck dispatched
+  expressCostPerUnit: 0, // $ per unit carried by truck
   expressCo2: 250
 };
 
@@ -155,7 +161,10 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   const purchaseCost = orderQty * config.unitCost;
   const holdingCost = stockEnd * config.holdingCost;
   const backorderCost = backorderEnd * (config.backorderCost ?? 0);
-  const transportCost = ships * config.shipCost + expressTrucks * config.expressFixedCost;
+  const transportFixedCost = ships * config.shipCost + expressTrucks * config.expressFixedCost;
+  const transportVariableCost =
+    consolidatedQty * (config.shipCostPerUnit ?? 0) + expressQty * (config.expressCostPerUnit ?? 0);
+  const transportCost = transportFixedCost + transportVariableCost;
   const profit = revenue - purchaseCost - holdingCost - backorderCost - transportCost;
 
   const transportCo2 = ships * config.shipCo2 + expressTrucks * config.expressCo2;
@@ -199,6 +208,8 @@ export function advancePeriod(state, config, demand, order, options = {}) {
       purchaseCost,
       holdingCost,
       backorderCost,
+      transportFixedCost,
+      transportVariableCost,
       transportCost,
       profit,
       transportCo2,
