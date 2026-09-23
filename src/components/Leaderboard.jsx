@@ -31,7 +31,7 @@ function Leaderboard({ rows, title }) {
               {hasFronts && <th>CO₂</th>}
               {hasFronts && <th>Service level</th>}
               {hasFronts && <th>Backorders</th>}
-              {hasFronts && <th>Truck fill</th>}
+              {hasFronts && <th>Fleet fill</th>}
             </tr>
           </thead>
           <tbody>
@@ -47,7 +47,7 @@ function Leaderboard({ rows, title }) {
                 )}
                 {hasFronts && <td>{row.cumBackorders ?? "—"}</td>}
                 {hasFronts && (
-                  <td>{row.truckFillPct != null ? `${Math.round(row.truckFillPct)}%` : "—"}</td>
+                  <td>{row.fleetFillPct != null ? `${Math.round(row.fleetFillPct)}%` : "—"}</td>
                 )}
               </tr>
             ))}

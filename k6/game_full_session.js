@@ -148,7 +148,7 @@ function driveOneRound(state, roundNo, total, dist) {
       gameId: state.gameId,
       adminToken: state.adminToken,
       price: 35 + (roundNo % 3) * 5,
-      co2PerTruck: 100 + (roundNo % 3) * 20
+      shipCo2: 100 + (roundNo % 3) * 20
     });
   }
 
@@ -176,7 +176,15 @@ export function setup() {
   }
   if (!alive) throw new Error("setup: backend /health did not respond");
 
-  const admin = j(post("/start-game", { nickname: "admin_load", adminKey: ADMIN_KEY, handsPerTur: N_ROUNDS }));
+  // The express truck is off by default; open it so both legs get exercised.
+  const admin = j(
+    post("/start-game", {
+      nickname: "admin_load",
+      adminKey: ADMIN_KEY,
+      handsPerTur: N_ROUNDS,
+      config: { expressEnabled: true }
+    })
+  );
   if (!admin.gameId || !admin.adminToken) throw new Error("setup: could not create game");
   // The server may clamp handsPerTur; totalRounds echoes the value it actually used.
   const configuredHands = admin.totalRounds || N_ROUNDS;
@@ -289,7 +297,7 @@ export function playerLoop(data) {
   if (gs.roundPhase === "active" && gs.player && !gs.player.submittedThisRound) {
     sleep(Math.random() * 3); // brief human reaction delay before ordering
     const qty = chooseOrder(gs.distribution);
-    // ~30% also split a little onto the express van (same-round arrival).
+    // ~30% also split a little onto the express truck (same-round arrival).
     const expressQty = Math.random() < 0.3 ? Math.floor(Math.random() * 30) + 10 : 0;
 
     const s0 = Date.now();

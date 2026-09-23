@@ -815,15 +815,26 @@ button.danger:hover {
   background: #fff;
 }
 
+/* Fast-truck on/off switch: its own full-width row, above the truck fields it
+   reveals. */
+.config-form .config-toggle {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
 @media (max-width: 640px) {
   .inventory-strip {
     flex-direction: column;
   }
 }
 
-/* ---- Truck sweep (cinematic round-end convoy) ---- */
+/* ---- Fleet sweep (cinematic round-end convoy of ships and trucks) ---- */
 
-.truck-sweep {
+.fleet-sweep {
   position: fixed;
   inset: 0;
   overflow: hidden;
@@ -832,8 +843,8 @@ button.danger:hover {
 }
 
 /* Smoke transition: the exhaust builds into a dense, billowing cloud that
-   engulfs the ENTIRE screen (trucks and UI alike), holds, then clears to reveal
-   the next round behind it. Sits above the trucks so the whiteout is total. */
+   engulfs the ENTIRE screen (vehicles and UI alike), holds, then clears to reveal
+   the next round behind it. Sits above the vehicles so the whiteout is total. */
 .exhaust-haze {
   position: absolute;
   inset: -20%; /* generous overscan so blur + drift never expose the edges */
@@ -874,19 +885,19 @@ button.danger:hover {
   }
 }
 
-.truck-unit {
+.fleet-unit {
   position: absolute;
   left: 0;
   transform-origin: center;
   will-change: transform;
-  animation-name: truck-drive;
+  animation-name: fleet-drive;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
 }
 
-/* Drive + per-truck scale live in one transform so they don't overwrite each
+/* Drive + per-vehicle scale live in one transform so they don't overwrite each
    other, and it stays on the GPU (no per-frame layout). --scale is set inline. */
-@keyframes truck-drive {
+@keyframes fleet-drive {
   from {
     transform: translateX(-260px) scale(var(--scale));
   }
@@ -895,27 +906,28 @@ button.danger:hover {
   }
 }
 
-.truck-art {
+.fleet-art {
   filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.25));
 }
 
-/* Billowing smoke cloud: born at the truck's rear, expands while drifting up and
-   back, then fades — so relative to the moving cab it reads as a heavy trailing
-   plume. Size and drift distance are set inline per cloud. Loops during the drive
-   via staggered delays. */
-.truck-smoke {
+/* Billowing smoke cloud: born at a truck's rear exhaust (a ship's funnel sets
+   its own origin inline), expands while drifting up and back, then fades — so
+   relative to the moving vehicle it reads as a heavy trailing plume. Size and
+   drift distance are set inline per cloud. Loops during the drive via staggered
+   delays. */
+.fleet-smoke {
   position: absolute;
   left: 4px;
   top: 44%;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(96, 94, 90, 0.6), rgba(96, 94, 90, 0) 68%);
   will-change: transform, opacity;
-  animation-name: truck-smoke-puff;
+  animation-name: fleet-smoke-puff;
   animation-timing-function: ease-out;
   animation-iteration-count: infinite;
 }
 
-@keyframes truck-smoke-puff {
+@keyframes fleet-smoke-puff {
   0% {
     transform: translate(0, 0) scale(0.35);
     opacity: 0;
@@ -929,7 +941,7 @@ button.danger:hover {
   }
 }
 
-/* Ground rumble as the near/hero trucks pass. Applied to the page; a transform
+/* Ground rumble as the near/hero vehicles pass. Applied to the page; a transform
    never affects layout, so this is safe. Synced (delay) to the hero's center. */
 .screen-rumble {
   animation: screen-rumble 0.28s linear 1s 5;
@@ -955,7 +967,7 @@ button.danger:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .truck-sweep {
+  .fleet-sweep {
     display: none;
   }
   .screen-rumble {

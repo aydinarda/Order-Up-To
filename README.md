@@ -1,6 +1,6 @@
 # Black Sea Gold: The Hazelnut Supply Challenge
 
-Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game, themed around a hazelnut cooperative distributing to a city hub. Students split an order quantity **across two delivery legs** each round against a shared randomized demand, with carry-over inventory, backorders, a delivery lead time (with an admin-configurable chance of a shared shipping delay event), transport CO₂ and storage CO₂; an admin controls the game flow round by round. Round 1 is a priming round: the warehouse starts empty and players place an opening order that arrives with a 1-round lead time. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂, and profit, service level, fleet utilisation and backorders are shown as separate KPIs.
+Multiplayer multi-period inventory simulation for classroom use — the order-up-to (base-stock) sibling of the Simple Newsvendor Game, themed around a hazelnut cooperative distributing to a city hub. Students order each round by **ship** — and, when the admin opens it, a fast **truck** leg — against a shared randomized demand, with carry-over inventory, backorders, a delivery lead time (with an admin-configurable chance of a shared shipping delay event), transport CO₂ and storage CO₂; an admin controls the game flow round by round. Round 1 is a priming round: the warehouse starts empty and players place an opening order that arrives with a 1-round lead time. The leaderboard is a Pareto representation of cumulative profit vs cumulative CO₂, and profit, service level, fleet utilisation and backorders are shown as separate KPIs.
 
 ### Delivery legs (the core trade-off)
 
@@ -8,14 +8,16 @@ Each round the order can be split across both vehicles at once (either can be ze
 
 | Leg | Capacity | Lead time | Cost & CO₂ | When to use |
 |---|---|---|---|---|
-| **Consolidated truck** | Large (default 100 u) | Full configured `L` | Cheaper + lower CO₂ per vehicle | Default; efficient when you can plan ahead |
-| **Express van** | Small (default 40 u) | **Same round** — can serve this round's demand | Higher cost **and** higher CO₂ per kg | Rescue a stockout that is happening right now — sparingly |
+| **Ship** 🚢 | Large (default 100 u) | Full configured `L` | Cheaper + lower CO₂ per vehicle | Default; efficient when you can plan ahead |
+| **Truck** 🚚 | Small (default 40 u) | **Same round** — can serve this round's demand | Higher cost **and** higher CO₂ per kg | Rescue a stockout that is happening right now — sparingly |
 
-Express lands the moment it is ordered (it never enters the pipeline, so even a shipping-delay event does not hold it up), but its smaller, pricier, dirtier vans make it strictly worse per kg — so leaning on it erodes both profit and the sustainability KPI.
+The truck lands the moment it is ordered (it never enters the pipeline, so even a shipping-delay event does not hold it up), but its smaller, pricier, dirtier vehicles make it strictly worse per kg — so leaning on it erodes both profit and the sustainability KPI.
+
+**The truck is off by default.** The admin switches it on or off between rounds with *Fast truck available* in the admin panel (`expressEnabled` in the config API); its capacity, cost and CO₂ fields only appear while it is on. While it is off, the truck leg is hidden from players, truck orders are rejected, and players who skip a round do not repeat an earlier truck order. Internally the ship is the `consolidated` leg and the truck the `express` leg (`expressQty`, `expressCapacity`, …).
 
 ### Backorders
 
-Unmet demand is not lost — it is **backordered**. On-hand is net inventory and goes negative when customers are still owed product. Every arrival (truck or express) fills that backlog first, then serves the current round's demand.
+Unmet demand is not lost — it is **backordered**. On-hand is net inventory and goes negative when customers are still owed product. Every arrival (ship or truck) fills that backlog first, then serves the current round's demand.
 
 - **Revenue** is booked on delivery, i.e. in the round a backorder is finally filled. Units still owed when the game ends never earn revenue.
 - **Backorder penalty** (`backorderCost`, default $5): charged per unit still backordered at the end of each round — the mirror image of holding cost. Holding cost and storage CO₂ apply only to positive stock.

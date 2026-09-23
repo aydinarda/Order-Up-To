@@ -26,7 +26,7 @@ const DEFAULT_ADMIN_KEY = process.env.ADMIN_KEY || "admin123";
 // Leaderboard = Pareto representation over (cumulative profit, cumulative CO2):
 // rows are annotated with a non-dominated front number and sorted (front asc,
 // profit desc). The same rows feed the client's profit-vs-CO2 scatter.
-function calculateLeaderboard(players, config) {
+function calculateLeaderboard(players) {
   const rows = Array.from(players.values()).map((player) => {
     const totals = player.history.reduce(
       (acc, entry) => ({
@@ -36,15 +36,14 @@ function calculateLeaderboard(players, config) {
         demand: acc.demand + (entry.demand ?? 0),
         onTime: acc.onTime + (entry.servedOnTime ?? 0),
         backorders: acc.backorders + (entry.newBackorders ?? 0),
-        // `vehicles` counts both consolidated trucks and express vans of a
-        // round; older history entries only carry `trucks`.
-        trucks: acc.trucks + (entry.vehicles ?? entry.trucks),
+        // Ships and express trucks dispatched this round.
+        vehicles: acc.vehicles + entry.vehicles,
         ordered: acc.ordered + entry.orderQty,
         // Total vehicle capacity dispatched, so fleet fill is accurate even when
-        // a player mixes consolidated trucks and (smaller) express vans.
-        capacityUnits: acc.capacityUnits + (entry.capacityUnits ?? entry.trucks * config.truckCapacity)
+        // a player mixes ships and (smaller) express trucks.
+        capacityUnits: acc.capacityUnits + entry.capacityUnits
       }),
-      { profit: 0, co2: 0, demand: 0, onTime: 0, backorders: 0, trucks: 0, ordered: 0, capacityUnits: 0 }
+      { profit: 0, co2: 0, demand: 0, onTime: 0, backorders: 0, vehicles: 0, ordered: 0, capacityUnits: 0 }
     );
 
     return {
@@ -54,10 +53,10 @@ function calculateLeaderboard(players, config) {
       cumCo2: totals.co2,
       // Total units that ever went on backorder (not the currently open backlog).
       cumBackorders: totals.backorders,
-      cumTrucks: totals.trucks,
+      cumVehicles: totals.vehicles,
       // Service level = fill rate: share of demand served from stock on time.
       serviceLevelPct: totals.demand > 0 ? (totals.onTime / totals.demand) * 100 : null,
-      truckFillPct: totals.capacityUnits > 0 ? (totals.ordered / totals.capacityUnits) * 100 : null,
+      fleetFillPct: totals.capacityUnits > 0 ? (totals.ordered / totals.capacityUnits) * 100 : null,
       leftover: player.inventory.onHand + player.inventory.pipeline.reduce((s, q) => s + q, 0),
       roundsPlayed: player.history.length
     };
@@ -78,13 +77,14 @@ const CONFIG_FIELDS = {
   unitCost: { integer: false, min: 0 },
   holdingCost: { integer: false, min: 0 },
   backorderCost: { integer: false, min: 0 },
-  truckCapacity: { integer: true, min: 1 },
-  fixedCostPerTruck: { integer: false, min: 0 },
-  co2PerTruck: { integer: false, min: 0 },
+  shipCapacity: { integer: true, min: 1 },
+  shipCost: { integer: false, min: 0 },
+  shipCo2: { integer: false, min: 0 },
   co2PerUnitHeld: { integer: false, min: 0 },
-  // Express van economics. Not preGameOnly — express arrives within the same
-  // round regardless of these (it never enters the pipeline), so changing them
-  // never corrupts an in-flight pipeline.
+  // Express truck on/off plus its economics. Not preGameOnly — the truck
+  // arrives within the same round (it never enters the pipeline), so toggling
+  // it or changing these never corrupts an in-flight pipeline.
+  expressEnabled: { boolean: true },
   expressCapacity: { integer: true, min: 1 },
   expressFixedCost: { integer: false, min: 0 },
   expressCo2: { integer: false, min: 0 },
@@ -106,6 +106,14 @@ function parseConfigUpdates(body, gameStarted) {
 
     if (rules.preGameOnly && gameStarted) {
       return { error: `${field} can only be changed before the first round starts` };
+    }
+
+    if (rules.boolean) {
+      if (typeof body[field] !== "boolean") {
+        return { error: `${field} must be true or false` };
+      }
+      updates[field] = body[field];
+      continue;
     }
 
     const parsed = Number(body[field]);
@@ -292,7 +300,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     });
 
     if (activeGame.roundPhase === "pending") {
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
     }
 
     emitGameEvent(activeGame, "player_joined", {
@@ -579,7 +587,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
     // q = 0 is a legal decision: "order nothing this round, run the shelves down".
     // The player can split the order across BOTH vehicles in the same round:
-    // `orderQty` rides the consolidated truck, `expressQty` the express van.
+    // `orderQty` rides the ship, `expressQty` the express truck (when available).
     const parsedQty = Number(orderQty ?? 0);
     if (!Number.isInteger(parsedQty) || parsedQty < 0) {
       return res.status(400).json({ error: "orderQty must be a non-negative integer" });
@@ -590,12 +598,16 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     }
 
     // Back-compat: an old client sends a single quantity plus mode. Route
-    // mode:"express" onto the express van; reject anything unrecognised.
+    // mode:"express" onto the express truck; reject anything unrecognised.
     if (rawMode !== undefined && rawMode !== "consolidated" && rawMode !== "express") {
       return res.status(400).json({ error: "mode must be 'consolidated' or 'express'" });
     }
     const consolidatedQty = rawMode === "express" ? 0 : parsedQty;
     const finalExpressQty = rawMode === "express" ? parsedQty + parsedExpressQty : parsedExpressQty;
+
+    if (finalExpressQty > 0 && !activeGame.config.expressEnabled) {
+      return res.status(400).json({ error: "the express truck is not available" });
+    }
 
     const round = getRoundForGame(activeGame);
     if (!round) {
@@ -667,14 +679,16 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
     // Record a result for every player so non-submitters also see the round outcome.
     // A missing submission repeats the player's previous round's split ("keep
-    // ordering the same"); with no prior order yet, the fallback is 0.
+    // ordering the same"); with no prior order yet, the fallback is 0. The
+    // express part is only repeated while the admin keeps the truck available.
+    const expressEnabled = Boolean(activeGame.config.expressEnabled);
     for (const player of activeGame.players.values()) {
       const order = activeGame.activeRoundOrders.get(player.id);
       const orderQty = order ? order.orderQty : player.lastQ ?? 0;
-      const expressQty = order ? order.expressQty : player.lastExpressQty ?? 0;
-      // The priming opening order uses a 1-round lead time; otherwise the
-      // consolidated leg uses the configured L. The express leg arrives within
-      // the same round (handled inside advancePeriod).
+      const expressQty = order ? order.expressQty : expressEnabled ? player.lastExpressQty ?? 0 : 0;
+      // The priming opening order uses a 1-round lead time; otherwise the ship
+      // leg uses the configured L. The express truck arrives within the same
+      // round (handled inside advancePeriod).
       const orderLeadTime = isPriming ? 1 : activeGame.config.leadTime;
 
       const { nextState, result } = advancePeriod(
@@ -718,7 +732,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         backorderCost: result.backorderCost,
         onHandEnd: result.onHandEnd,
         inTransit: result.inTransitEnd,
-        trucks: result.vehicles,
+        vehicles: result.vehicles,
         co2Transport: result.transportCo2,
         co2Storage: result.storageCo2,
         profit: result.profit
@@ -755,7 +769,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       isTurComplete = true;
 
       // Snapshot leaderboard before score reset
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
 
       const completedTurNumber = activeGame.currentTurIndex + 1;
 
@@ -777,7 +791,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         isGameOver = true;
       }
     } else {
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
     }
 
     const nextRound = getRoundForGame(activeGame);
@@ -839,7 +853,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundDemand = null;
     activeGame.activeRoundDelayed = false;
     activeGame.activeRoundOrders = new Map();
-    activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
+    activeGame.leaderboard = calculateLeaderboard(activeGame.players);
 
     emitGameEvent(activeGame, "game_extended");
 
@@ -948,7 +962,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       distribution: { ...restarted.distribution },
       updatedAt: createdAt
     });
-    restarted.leaderboard = calculateLeaderboard(restarted.players, restarted.config);
+    restarted.leaderboard = calculateLeaderboard(restarted.players);
 
     activeGame = restarted;
 

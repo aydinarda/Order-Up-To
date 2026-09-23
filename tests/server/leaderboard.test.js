@@ -8,8 +8,8 @@ const ADMIN_KEY = "admin123";
 // Deterministic demand: a normal distribution with stdDev=0 always equals the
 // mean. The warehouse starts empty and round 1 is a priming round (no sales;
 // the opening order arrives next round with lead time 1). Default config: L=2,
-// price 40, unitCost 10, holding 1, backorder penalty 5, truckCapacity 100,
-// truckCost 50, co2PerTruck 100, co2PerUnitHeld 0.5.
+// price 40, unitCost 10, holding 1, backorder penalty 5, shipCapacity 100,
+// shipCost 50, shipCo2 100, co2PerUnitHeld 0.5.
 //
 // A 2-round game (priming + one selling round at demand 100), player orders
 // q1 (opening) then q2:
@@ -66,11 +66,11 @@ test("ranks players by Pareto front, then profit within a front", async () => {
   ]);
 });
 
-test("leaderboard rows carry CO2, backorder, service-level and truck-fill KPIs", async () => {
+test("leaderboard rows carry CO2, backorder, service-level and fleet-fill KPIs", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, alice } = await setupDeterministicGame(app);
 
-  // q1=150 opening (2 trucks), q2=0. sold 100, onHandEnd 50.
+  // q1=150 opening (2 ships), q2=0. sold 100, onHandEnd 50.
   await playRound(app, gameId, adminToken, { [alice]: 150 });
   await playRound(app, gameId, adminToken, { [alice]: 0 });
 
@@ -80,8 +80,8 @@ test("leaderboard rows carry CO2, backorder, service-level and truck-fill KPIs",
   assert.equal(row.cumCo2, 225); // 200 + 25
   assert.equal(row.cumBackorders, 0);
   assert.equal(row.serviceLevelPct, 100);
-  assert.equal(row.cumTrucks, 2);
-  assert.equal(row.truckFillPct, 75); // 150 ordered / (2 trucks * 100)
+  assert.equal(row.cumVehicles, 2);
+  assert.equal(row.fleetFillPct, 75); // 150 ordered / (2 ships * 100)
   assert.equal(row.leftover, 50); // 50 on hand, empty pipeline
 });
 
@@ -144,7 +144,7 @@ test("extreme over-ordering produces a negative cumulative profit", async () => 
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, alice } = await setupDeterministicGame(app);
 
-  // q1=800 opening (8 trucks) then 0. r1 profit -8400; r2 sells 100, holds 700.
+  // q1=800 opening (8 ships) then 0. r1 profit -8400; r2 sells 100, holds 700.
   await playRound(app, gameId, adminToken, { [alice]: 800 });
   await playRound(app, gameId, adminToken, { [alice]: 0 });
 
@@ -178,7 +178,7 @@ test("under-ordering builds a backlog: fill rate, cumulative backorders and pena
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, alice } = await setupDeterministicGame(app, { handsPerTur: 3 });
 
-  // Round 1 (priming): q1=50 (1 truck)             -> profit -550,  co2 100
+  // Round 1 (priming): q1=50 (1 ship)             -> profit -550,  co2 100
   // Round 2: 50 arrive, demand 100 -> 50 on time, 50 backordered (net -50)
   //          revenue 2000, penalty 50*5              -> profit 1750
   // Round 3: nothing arrives, demand 100 -> all 100 backordered (net -150)

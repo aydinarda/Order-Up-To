@@ -6,12 +6,13 @@ import { useState } from "react";
 // On the priming round (round 1) the opening order arrives in 1 round instead
 // of the configured lead time, and there is no demand.
 //
-// Both delivery legs can be used in the same round: the consolidated truck
-// (cheaper, lower CO2, full lead time) carries one quantity, and the express
-// van (arrives the same round — it can still serve this round's demand — but
-// smaller, pricier and dirtier per kg) carries another. Either can be zero.
+// Both delivery legs can be used in the same round: the ship (cheaper, lower
+// CO2, full lead time) carries one quantity, and the express truck (arrives the
+// same round — it can still serve this round's demand — but smaller, pricier
+// and dirtier per kg) carries another. Either can be zero. The truck leg only
+// exists while the admin has it switched on (config.expressEnabled).
 function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, priming = false }) {
-  const [truckQty, setTruckQty] = useState("");
+  const [shipQty, setShipQty] = useState("");
   const [expressQty, setExpressQty] = useState("");
   const [error, setError] = useState("");
 
@@ -23,42 +24,48 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
     const parsed = Number(raw);
     return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
   };
-  const parsedTruck = parseLeg(truckQty);
-  const parsedExpress = parseLeg(expressQty);
-  const isValid = parsedTruck !== null && parsedExpress !== null;
+  const expressEnabled = Boolean(config?.expressEnabled);
+  const parsedShip = parseLeg(shipQty);
+  // Whatever was typed while the truck was available is ignored once it's off.
+  const parsedExpress = expressEnabled ? parseLeg(expressQty) : 0;
+  const isValid = parsedShip !== null && parsedExpress !== null;
 
-  const truckLead = priming ? 1 : config?.leadTime ?? 0;
+  const shipLead = priming ? 1 : config?.leadTime ?? 0;
 
   const legs = config
     ? [
         {
           id: "consolidated",
-          label: "Consolidated truck",
-          icon: "🚚",
+          label: "Ship",
+          icon: "🚢",
           tag: "Efficient",
-          word: "truck",
-          cap: config.truckCapacity,
-          cost: config.fixedCostPerTruck,
-          co2: config.co2PerTruck,
-          lead: truckLead,
-          qty: parsedTruck,
-          rawValue: truckQty,
-          onChange: setTruckQty
+          word: "ship",
+          cap: config.shipCapacity,
+          cost: config.shipCost,
+          co2: config.shipCo2,
+          lead: shipLead,
+          qty: parsedShip,
+          rawValue: shipQty,
+          onChange: setShipQty
         },
-        {
-          id: "express",
-          label: "Express van",
-          icon: "🚐",
-          tag: "Fast · costly",
-          word: "van",
-          cap: config.expressCapacity,
-          cost: config.expressFixedCost,
-          co2: config.expressCo2,
-          lead: 0, // same-round arrival
-          qty: parsedExpress,
-          rawValue: expressQty,
-          onChange: setExpressQty
-        }
+        ...(expressEnabled
+          ? [
+              {
+                id: "express",
+                label: "Truck",
+                icon: "🚚",
+                tag: "Fast · costly",
+                word: "truck",
+                cap: config.expressCapacity,
+                cost: config.expressFixedCost,
+                co2: config.expressCo2,
+                lead: 0, // same-round arrival
+                qty: parsedExpress,
+                rawValue: expressQty,
+                onChange: setExpressQty
+              }
+            ]
+          : [])
       ].map((leg) => {
         const vehicles = leg.qty > 0 && leg.cap > 0 ? Math.ceil(leg.qty / leg.cap) : 0;
         return {
@@ -73,7 +80,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
       })
     : [];
 
-  const totalQty = (parsedTruck ?? 0) + (parsedExpress ?? 0);
+  const totalQty = (parsedShip ?? 0) + (parsedExpress ?? 0);
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -84,7 +91,7 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
     }
 
     setError("");
-    onSubmit(parsedTruck, parsedExpress);
+    onSubmit(parsedShip, parsedExpress);
   };
 
   return (

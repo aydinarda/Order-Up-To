@@ -6,7 +6,7 @@ import Leaderboard from "./components/Leaderboard";
 import ParetoScatter from "./components/ParetoScatter";
 import PipelineViz from "./components/PipelineViz";
 import ProgressBar from "./components/ProgressBar";
-import TruckSweep from "./components/TruckSweep";
+import FleetSweep from "./components/FleetSweep";
 import {
   endGame,
   endRound,
@@ -30,30 +30,32 @@ import {
   getSessionFromUrl
 } from "./utils/sessionStorage";
 
-// Admin-tunable economy fields; the draft holds raw input strings. All of them
-// stay adjustable between rounds — a mid-game leadTime change only affects new
-// orders (in-flight ones keep their arrival time). Round 1's opening order
-// always arrives in 1 round regardless.
+// Admin-tunable economy fields; the draft holds raw input strings (booleans for
+// toggles). All of them stay adjustable between rounds — a mid-game leadTime
+// change only affects new ships (in-flight ones keep their arrival time). Round
+// 1's opening order always arrives in 1 round regardless. Fields flagged
+// `express` belong to the fast truck and only show while it is available.
 const CONFIG_FIELD_DEFS = [
-  { key: "leadTime", label: "Lead time (rounds)" },
+  { key: "leadTime", label: "Ship lead time (rounds)" },
   { key: "price", label: "Price ($/unit)" },
   { key: "unitCost", label: "Unit cost ($/unit)" },
   { key: "holdingCost", label: "Holding ($/unit/round)" },
   { key: "backorderCost", label: "Backorder penalty ($/unit/round)" },
-  { key: "truckCapacity", label: "Truck capacity (units)" },
-  { key: "fixedCostPerTruck", label: "Truck cost ($/truck)" },
-  { key: "co2PerTruck", label: "CO₂ per truck (kg)" },
-  { key: "expressCapacity", label: "Express van capacity (units)" },
-  { key: "expressFixedCost", label: "Express van cost ($/van)" },
-  { key: "expressCo2", label: "CO₂ per express van (kg)" },
+  { key: "shipCapacity", label: "Ship capacity (units)" },
+  { key: "shipCost", label: "Ship cost ($/ship)" },
+  { key: "shipCo2", label: "CO₂ per ship (kg)" },
+  { key: "expressEnabled", label: "Fast truck available", type: "toggle" },
+  { key: "expressCapacity", label: "Truck capacity (units)", express: true },
+  { key: "expressFixedCost", label: "Truck cost ($/truck)", express: true },
+  { key: "expressCo2", label: "CO₂ per truck (kg)", express: true },
   { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" },
   { key: "delayProbability", label: "Shipping delay chance (0–1)", max: 1, step: 0.05 }
 ];
 
 function draftFromConfig(config) {
   const draft = {};
-  for (const { key } of CONFIG_FIELD_DEFS) {
-    draft[key] = String(config?.[key] ?? "");
+  for (const { key, type } of CONFIG_FIELD_DEFS) {
+    draft[key] = type === "toggle" ? Boolean(config?.[key]) : String(config?.[key] ?? "");
   }
   return draft;
 }
@@ -584,8 +586,14 @@ function App() {
 
       // --- Config validation: send only fields that differ from the server's copy ---
       const configPayload = {};
-      for (const { key } of CONFIG_FIELD_DEFS) {
+      for (const { key, type } of CONFIG_FIELD_DEFS) {
         const raw = configDraft[key];
+        if (type === "toggle") {
+          if (!gameConfig || raw !== Boolean(gameConfig[key])) {
+            configPayload[key] = raw;
+          }
+          continue;
+        }
         if (raw === "" || raw === undefined) {
           continue;
         }
@@ -795,7 +803,7 @@ function App() {
       return undefined;
     }
 
-    // Long enough for the full truck convoy (staggered, ~4.5s) to clear the
+    // Long enough for the full fleet convoy (staggered, ~4.5s) to clear the
     // screen; the emoji rain has already faded by ~3.6s.
     const timeoutId = setTimeout(() => setEmojiRaining(false), 5200);
     return () => clearTimeout(timeoutId);
@@ -927,7 +935,9 @@ function App() {
       {/* Rendered OUTSIDE <main> on purpose: <main> gets the rumble transform,
           and a transformed ancestor would trap this position:fixed overlay
           inside the centered page column instead of the full viewport. */}
-      {emojiRaining ? <TruckSweep key={`truck-${emojiBurstKey}`} /> : null}
+      {emojiRaining ? (
+        <FleetSweep key={`fleet-${emojiBurstKey}`} withTrucks={Boolean(gameConfig?.expressEnabled)} />
+      ) : null}
       <main className={`page ${showLeaderboard ? "page-wide" : ""} ${emojiRaining ? "screen-rumble" : ""}`}>
       <header className="hero">
         <p className="eyebrow">Black Sea Gold Cooperative</p>
@@ -1044,27 +1054,45 @@ function App() {
 
           </div>
           <div className="config-form">
-            {CONFIG_FIELD_DEFS.map(({ key, label, preGameOnly, max, step }) => (
-              <label key={key} htmlFor={`config-${key}`}>
-                {label}
-                {preGameOnly && adminRoundHistory.length > 0 ? " (locked)" : ""}
-                <input
-                  id={`config-${key}`}
-                  type="number"
-                  min="0"
-                  max={max}
-                  step={step}
-                  value={configDraft[key] ?? ""}
-                  onChange={(event) => {
-                    setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }));
-                    setHasUnsavedConfigChanges(true);
-                  }}
-                  disabled={
-                    roundPhase === "active" || (preGameOnly && adminRoundHistory.length > 0)
-                  }
-                />
-              </label>
-            ))}
+            {CONFIG_FIELD_DEFS.filter(
+              ({ express }) => !express || configDraft.expressEnabled
+            ).map(({ key, label, type, preGameOnly, max, step }) =>
+              type === "toggle" ? (
+                <label key={key} htmlFor={`config-${key}`} className="checkbox-line config-toggle">
+                  <input
+                    id={`config-${key}`}
+                    type="checkbox"
+                    checked={Boolean(configDraft[key])}
+                    onChange={(event) => {
+                      setConfigDraft((prev) => ({ ...prev, [key]: event.target.checked }));
+                      setHasUnsavedConfigChanges(true);
+                    }}
+                    disabled={roundPhase === "active"}
+                  />
+                  {label}
+                </label>
+              ) : (
+                <label key={key} htmlFor={`config-${key}`}>
+                  {label}
+                  {preGameOnly && adminRoundHistory.length > 0 ? " (locked)" : ""}
+                  <input
+                    id={`config-${key}`}
+                    type="number"
+                    min="0"
+                    max={max}
+                    step={step}
+                    value={configDraft[key] ?? ""}
+                    onChange={(event) => {
+                      setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }));
+                      setHasUnsavedConfigChanges(true);
+                    }}
+                    disabled={
+                      roundPhase === "active" || (preGameOnly && adminRoundHistory.length > 0)
+                    }
+                  />
+                </label>
+              )
+            )}
           </div>
           <button
             type="button"
@@ -1201,7 +1229,12 @@ function App() {
         </section>
       ) : null}
 
-      {roundPhase === "pending" ? <RoundResult result={lastRoundResult || finalRoundResult} /> : null}
+      {roundPhase === "pending" ? (
+        <RoundResult
+          result={lastRoundResult || finalRoundResult}
+          expressEnabled={Boolean(gameConfig?.expressEnabled)}
+        />
+      ) : null}
 
       {isGameFinished && !isAdmin ? (
         <section className="card final-actions">

@@ -20,12 +20,12 @@ test("set-config updates economy fields for an admin", async () => {
 
   const res = await request(app)
     .post("/set-config")
-    .send({ gameId, adminToken, price: 50, unitCost: 12, truckCapacity: 150, backorderCost: 8 });
+    .send({ gameId, adminToken, price: 50, unitCost: 12, shipCapacity: 150, backorderCost: 8 });
 
   assert.equal(res.status, 200);
   assert.equal(res.body.config.price, 50);
   assert.equal(res.body.config.unitCost, 12);
-  assert.equal(res.body.config.truckCapacity, 150);
+  assert.equal(res.body.config.shipCapacity, 150);
   assert.equal(res.body.config.backorderCost, 8);
   // Untouched fields keep their defaults.
   assert.equal(res.body.config.holdingCost, 1);
@@ -62,14 +62,14 @@ test("set-config rejects negative values and non-integer integer fields", async 
     .send({ gameId, adminToken, holdingCost: -1 });
   assert.equal(negative.status, 400);
 
-  const fractionalTrucks = await request(app)
+  const fractionalShips = await request(app)
     .post("/set-config")
-    .send({ gameId, adminToken, truckCapacity: 99.5 });
-  assert.equal(fractionalTrucks.status, 400);
+    .send({ gameId, adminToken, shipCapacity: 99.5 });
+  assert.equal(fractionalShips.status, 400);
 
   const zeroCapacity = await request(app)
     .post("/set-config")
-    .send({ gameId, adminToken, truckCapacity: 0 });
+    .send({ gameId, adminToken, shipCapacity: 0 });
   assert.equal(zeroCapacity.status, 400);
 });
 
@@ -119,10 +119,10 @@ test("seed is frozen once a round has ended; leadTime stays adjustable", async (
   // leadTime and other fields stay adjustable between rounds (mid-game shock).
   const midGame = await request(app)
     .post("/set-config")
-    .send({ gameId, adminToken, leadTime: 4, co2PerTruck: 200 });
+    .send({ gameId, adminToken, leadTime: 4, shipCo2: 200 });
   assert.equal(midGame.status, 200);
   assert.equal(midGame.body.config.leadTime, 4);
-  assert.equal(midGame.body.config.co2PerTruck, 200);
+  assert.equal(midGame.body.config.shipCo2, 200);
 });
 
 test("mid-game leadTime change keeps in-flight orders and applies to new ones", async () => {
@@ -285,8 +285,8 @@ test("delayProbability=0 (default) never triggers a delay", async () => {
   assert.ok(gs.body.player.history.every((round) => round.delayed === false));
 });
 
-// ── Delivery mode (consolidated vs express) ─────────────────────────────────
-test("set-config accepts express van economy fields", async () => {
+// ── Delivery legs: ship (consolidated) vs express truck ─────────────────────
+test("set-config accepts express truck economy fields", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken } = await createGame(app);
 
@@ -318,15 +318,15 @@ test("an express order arrives within the round it is placed", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, playerId } = await createGame(app, {
     handsPerTur: 4,
-    config: { leadTime: 3 }
+    config: { leadTime: 3, expressEnabled: true }
   });
 
-  // Priming round: no express; place a consolidated opening order.
+  // Priming round: no express; place a ship opening order.
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
-  // Round 2: express order of 40 (one van). Despite leadTime 3, it lands in
+  // Round 2: express order of 40 (one truck). Despite leadTime 3, it lands in
   // round 2 itself and can serve round 2's demand.
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 40, mode: "express" });
@@ -342,7 +342,7 @@ test("both vehicles can be used in the same round: split arrivals, summed cost a
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, playerId } = await createGame(app, {
     handsPerTur: 5,
-    config: { leadTime: 2 }
+    config: { leadTime: 2, expressEnabled: true }
   });
 
   // Priming round: no order.
@@ -350,8 +350,8 @@ test("both vehicles can be used in the same round: split arrivals, summed cost a
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
-  // Round 2: 250 kg by consolidated truck (3 trucks, arrives round 4) AND
-  // 90 kg by express van (3 vans, landing within round 2) in the SAME submission.
+  // Round 2: 250 kg by ship (3 ships, arrives round 4) AND 90 kg by express
+  // truck (3 trucks, landing within round 2) in the SAME submission.
   await request(app).post("/start-round").send({ gameId, adminToken });
   const submit = await request(app)
     .post("/submit-order")
@@ -372,13 +372,13 @@ test("both vehicles can be used in the same round: split arrivals, summed cost a
   // 3×100 kg + 3×250 kg), and the purchase covers the combined 340 kg.
   assert.equal(mixedRound.mode, "mixed");
   assert.equal(mixedRound.orderQty, 340);
-  assert.equal(mixedRound.trucks, 3);
-  assert.equal(mixedRound.vans, 3);
-  assert.equal(mixedRound.truckCost, 3 * cfg.fixedCostPerTruck + 3 * cfg.expressFixedCost);
-  assert.equal(mixedRound.transportCo2, 3 * cfg.co2PerTruck + 3 * cfg.expressCo2);
+  assert.equal(mixedRound.ships, 3);
+  assert.equal(mixedRound.expressTrucks, 3);
+  assert.equal(mixedRound.transportCost, 3 * cfg.shipCost + 3 * cfg.expressFixedCost);
+  assert.equal(mixedRound.transportCo2, 3 * cfg.shipCo2 + 3 * cfg.expressCo2);
   assert.equal(mixedRound.purchaseCost, 340 * cfg.unitCost);
 
-  // Round 3: nothing due — the consolidated leg is still in transit.
+  // Round 3: nothing due — the ship is still in transit.
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
   await request(app).post("/end-round").send({ gameId, adminToken });
@@ -386,13 +386,88 @@ test("both vehicles can be used in the same round: split arrivals, summed cost a
   gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.history[2].arrival, 0);
 
-  // Round 4: the consolidated 250 kg lands after the full lead time.
+  // Round 4: the shipped 250 kg lands after the full lead time.
   await request(app).post("/start-round").send({ gameId, adminToken });
   await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
   gs = await request(app).get("/game-state").query({ gameId, playerId });
   assert.equal(gs.body.player.history[3].arrival, 250);
+});
+
+test("the express truck is off by default: truck orders are rejected, ship orders are not", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId, config } = await createGame(app);
+  assert.equal(config.expressEnabled, false);
+
+  await request(app).post("/start-round").send({ gameId, adminToken });
+
+  const truckOrder = await request(app)
+    .post("/submit-order")
+    .send({ gameId, playerId, orderQty: 50, expressQty: 40 });
+  assert.equal(truckOrder.status, 400);
+  assert.match(truckOrder.body.error, /express truck is not available/i);
+
+  // The old single-quantity express path is closed too.
+  const legacyExpress = await request(app)
+    .post("/submit-order")
+    .send({ gameId, playerId, orderQty: 40, mode: "express" });
+  assert.equal(legacyExpress.status, 400);
+
+  const shipOrder = await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 50 });
+  assert.equal(shipOrder.status, 200);
+});
+
+test("set-config switches the express truck on between rounds and rejects non-booleans", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app);
+
+  const notBoolean = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, expressEnabled: "yes" });
+  assert.equal(notBoolean.status, 400);
+  assert.match(notBoolean.body.error, /true or false/i);
+
+  const on = await request(app).post("/set-config").send({ gameId, adminToken, expressEnabled: true });
+  assert.equal(on.status, 200);
+  assert.equal(on.body.config.expressEnabled, true);
+
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  const truckOrder = await request(app)
+    .post("/submit-order")
+    .send({ gameId, playerId, orderQty: 50, expressQty: 40 });
+  assert.equal(truckOrder.status, 200);
+  assert.equal(truckOrder.body.expressQty, 40);
+});
+
+test("a non-submitter repeats a truck order only while the truck is available", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  // Four hands so three rounds do not complete the tur (which resets history).
+  const { gameId, adminToken, playerId } = await createGame(app, {
+    handsPerTur: 4,
+    config: { expressEnabled: true }
+  });
+
+  // Round 1: 50 by ship + 40 by truck.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 50, expressQty: 40 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  // Round 2: no submission, truck still on -> both legs repeat.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  // Admin closes the truck. Round 3: no submission -> only the ship repeats.
+  await request(app).post("/set-config").send({ gameId, adminToken, expressEnabled: false });
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  const gs = await request(app).get("/game-state").query({ gameId, playerId });
+  const [, round2, round3] = gs.body.player.history;
+  assert.equal(round2.consolidatedQty, 50);
+  assert.equal(round2.expressQty, 40);
+  assert.equal(round3.consolidatedQty, 50);
+  assert.equal(round3.expressQty, 0);
 });
 
 // ── Admin announcements ─────────────────────────────────────────────────────

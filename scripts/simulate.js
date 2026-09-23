@@ -19,19 +19,19 @@ const reps = arg("reps", 500);
 const config = {
   ...DEFAULT_CONFIG,
   co2PerUnitHeld: arg("co2held", DEFAULT_CONFIG.co2PerUnitHeld),
-  truckCapacity: arg("capacity", DEFAULT_CONFIG.truckCapacity),
+  shipCapacity: arg("capacity", DEFAULT_CONFIG.shipCapacity),
   startingOnHand: arg("start", DEFAULT_CONFIG.startingOnHand)
 };
 const distribution = { type: "normal", mean: 100, stdDev: 20 };
 
 // An (R, S) policy: raise inventory position to S every R rounds, submit S = 0
 // in between (no order). R = 1 is the classic every-round base-stock policy;
-// R > 1 emulates a player who batches shipments for full trucks at the price of
+// R > 1 emulates a player who batches shipments for full ships at the price of
 // carrying more stock. Players express this in-game by varying their submitted S.
 function simulate(R, S, seed) {
   const rand = createRng(seed);
   let state = createInitialState(config);
-  const totals = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, backorders: 0, demand: 0, trucks: 0, ordered: 0 };
+  const totals = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, backorders: 0, demand: 0, ships: 0, ordered: 0 };
 
   for (let r = 0; r < rounds; r++) {
     const demand = sampleDemand(distribution, rand);
@@ -44,7 +44,7 @@ function simulate(R, S, seed) {
     totals.storageCo2 += result.storageCo2;
     totals.backorders += result.newBackorders;
     totals.demand += demand;
-    totals.trucks += result.trucks;
+    totals.ships += result.ships;
     totals.ordered += result.orderQty;
   }
 
@@ -54,7 +54,7 @@ function simulate(R, S, seed) {
 const rows = [];
 for (const R of [1, 2, 3]) {
   for (let S = 200; S <= 700; S += 25) {
-    const acc = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, backorders: 0, demand: 0, trucks: 0, ordered: 0 };
+    const acc = { profit: 0, co2: 0, transportCo2: 0, storageCo2: 0, backorders: 0, demand: 0, ships: 0, ordered: 0 };
     for (let rep = 0; rep < reps; rep++) {
       const t = simulate(R, S, 1000 + rep);
       for (const key of Object.keys(acc)) acc[key] += t[key];
@@ -65,18 +65,18 @@ for (const R of [1, 2, 3]) {
       S,
       profit: Math.round(acc.profit / reps),
       co2: Math.round(acc.co2 / reps),
-      truckCo2: Math.round(acc.transportCo2 / reps),
+      shipCo2: Math.round(acc.transportCo2 / reps),
       storeCo2: Math.round(acc.storageCo2 / reps),
       "bo%": Math.round((acc.backorders / acc.demand) * 1000) / 10,
-      trucks: Math.round((acc.trucks / reps) * 10) / 10,
-      "fill%": acc.trucks > 0 ? Math.round((acc.ordered / (acc.trucks * config.truckCapacity)) * 100) : null
+      ships: Math.round((acc.ships / reps) * 10) / 10,
+      "fill%": acc.ships > 0 ? Math.round((acc.ordered / (acc.ships * config.shipCapacity)) * 100) : null
     });
   }
 }
 
 console.log(
-  `config: L=${config.leadTime} capacity=${config.truckCapacity} truckCost=${config.fixedCostPerTruck} ` +
-    `co2/truck=${config.co2PerTruck} co2/unit=${config.co2PerUnitHeld} start=${config.startingOnHand} ` +
+  `config: L=${config.leadTime} capacity=${config.shipCapacity} shipCost=${config.shipCost} ` +
+    `co2/ship=${config.shipCo2} co2/unit=${config.co2PerUnitHeld} start=${config.startingOnHand} ` +
     `rounds=${rounds} reps=${reps} demand=N(100,20)`
 );
 console.table(rows);

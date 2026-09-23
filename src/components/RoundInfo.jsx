@@ -31,23 +31,25 @@ function ConfigDetail({ config }) {
         ]}
       />
       <ChipGroup
-        title="Consolidated truck"
+        title="Ship"
         chips={[
           { label: "Lead time", value: `${config.leadTime} rounds` },
-          { label: "Capacity", value: `${config.truckCapacity} u` },
-          { label: "Cost", value: `$${config.fixedCostPerTruck}` },
-          { label: "CO₂", value: `${config.co2PerTruck} kg` }
+          { label: "Capacity", value: `${config.shipCapacity} u` },
+          { label: "Cost", value: `$${config.shipCost}` },
+          { label: "CO₂", value: `${config.shipCo2} kg` }
         ]}
       />
-      <ChipGroup
-        title="Express van"
-        chips={[
-          { label: "Lead time", value: "Same round" },
-          { label: "Capacity", value: `${config.expressCapacity} u` },
-          { label: "Cost", value: `$${config.expressFixedCost}` },
-          { label: "CO₂", value: `${config.expressCo2} kg` }
-        ]}
-      />
+      {config.expressEnabled && (
+        <ChipGroup
+          title="Truck"
+          chips={[
+            { label: "Lead time", value: "Same round" },
+            { label: "Capacity", value: `${config.expressCapacity} u` },
+            { label: "Cost", value: `$${config.expressFixedCost}` },
+            { label: "CO₂", value: `${config.expressCo2} kg` }
+          ]}
+        />
+      )}
       <ChipGroup
         title="Storage & risk"
         chips={[

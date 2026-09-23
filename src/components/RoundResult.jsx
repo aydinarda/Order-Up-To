@@ -10,19 +10,16 @@ function formatCo2(value) {
   return `${Math.round(value * 10) / 10} kg`;
 }
 
-function RoundResult({ result }) {
+// The order is split across the ship (consolidated leg) and the express truck;
+// either may be zero. The truck row is only shown while the truck is available,
+// or when this round actually used it.
+function RoundResult({ result, expressEnabled = false }) {
   if (!result) {
     return null;
   }
 
   const demandValue = result.realizedDemand ?? result.demand;
-  // Older results carry a single mode; newer ones split the order across both
-  // vehicles (either leg may be zero).
-  const consolidatedQty =
-    result.consolidatedQty ?? (result.mode === "express" ? 0 : result.orderQty);
-  const expressQty = result.expressQty ?? (result.mode === "express" ? result.orderQty : 0);
-  const trucks = result.consolidatedQty !== undefined || result.mode !== "express" ? result.trucks : 0;
-  const vans = result.vans ?? (result.mode === "express" ? result.trucks : 0);
+  const { consolidatedQty, expressQty, ships, expressTrucks } = result;
 
   return (
     <section className="card result-card">
@@ -66,22 +63,28 @@ function RoundResult({ result }) {
         <p>Order placed (q)</p>
         <strong>{result.orderQty}</strong>
 
-        <p>🚚 Consolidated</p>
+        <p>🚢 Ship</p>
         <strong>
           {consolidatedQty > 0
-            ? `${consolidatedQty} kg · ${trucks} truck${trucks === 1 ? "" : "s"}`
+            ? `${consolidatedQty} kg · ${ships} ship${ships === 1 ? "" : "s"}`
             : "—"}
         </strong>
 
-        <p>🚐 Express</p>
-        <strong>
-          {expressQty > 0 ? `${expressQty} kg · ${vans} van${vans === 1 ? "" : "s"}` : "—"}
-        </strong>
+        {(expressEnabled || expressQty > 0) && (
+          <>
+            <p>🚚 Truck</p>
+            <strong>
+              {expressQty > 0
+                ? `${expressQty} kg · ${expressTrucks} truck${expressTrucks === 1 ? "" : "s"}`
+                : "—"}
+            </strong>
+          </>
+        )}
 
         <p>Fleet fill</p>
         <strong>
-          {result.truckFillPct !== null && result.orderQty > 0
-            ? `${Math.round(result.truckFillPct)}% full`
+          {result.fleetFillPct !== null && result.orderQty > 0
+            ? `${Math.round(result.fleetFillPct)}% full`
             : "—"}
         </strong>
 
@@ -98,7 +101,7 @@ function RoundResult({ result }) {
         <strong>{toCurrency(result.backorderCost)}</strong>
 
         <p>Transport cost</p>
-        <strong>{toCurrency(result.truckCost)}</strong>
+        <strong>{toCurrency(result.transportCost)}</strong>
 
         <p>Transport CO₂</p>
         <strong>{formatCo2(result.transportCo2)}</strong>

@@ -154,7 +154,15 @@ export function setup() {
   }
   if (!alive) throw new Error("setup: backend /health did not respond");
 
-  const admin = j(post("/start-game", { nickname: "admin_stress", adminKey: ADMIN_KEY, handsPerTur: N_ROUNDS }));
+  // The express truck is off by default; open it so both legs get exercised.
+  const admin = j(
+    post("/start-game", {
+      nickname: "admin_stress",
+      adminKey: ADMIN_KEY,
+      handsPerTur: N_ROUNDS,
+      config: { expressEnabled: true }
+    })
+  );
   if (!admin.gameId || !admin.adminToken) throw new Error("setup: could not create game");
 
   const players = [];
@@ -215,7 +223,7 @@ export function playerLoop(data) {
 
   if (gs.roundPhase === "active" && gs.player && !gs.player.submittedThisRound) {
     const orderQty = chooseOrder(gs.distribution);
-    // ~30% also split a little onto the express van (same-round arrival).
+    // ~30% also split a little onto the express truck (same-round arrival).
     const expressQty = Math.random() < 0.3 ? Math.floor(Math.random() * 30) + 10 : 0;
     const s0 = Date.now();
     const r = post("/submit-order", { gameId: data.gameId, playerId: player.playerId, orderQty, expressQty });

@@ -21,20 +21,20 @@ describe("RoundResult", () => {
       orderQty: 150,
       consolidatedQty: 110,
       expressQty: 40,
-      trucks: 2,
-      vans: 1,
-      truckFillPct: 75,
+      ships: 2,
+      expressTrucks: 1,
+      fleetFillPct: 75,
       revenue: 3800,
       purchaseCost: 1500,
       holdingCost: 0,
       backorderCost: 35,
-      truckCost: 220,
+      transportCost: 220,
       transportCo2: 450,
       storageCo2: 10,
       profit: 2060,
       co2: 460
     };
-    render(<RoundResult result={result} />);
+    render(<RoundResult result={result} expressEnabled />);
 
     expect(screen.getByText("Round Result")).toBeInTheDocument();
     expect(screen.getByText("Order placed (q)")).toBeInTheDocument();
@@ -46,8 +46,8 @@ describe("RoundResult", () => {
     expect(screen.getByText("Backorder penalty")).toBeInTheDocument();
     expect(screen.getByText("$35")).toBeInTheDocument();
     // Both legs of the mixed order are itemised.
-    expect(screen.getByText(/110 kg · 2 trucks/)).toBeInTheDocument();
-    expect(screen.getByText(/40 kg · 1 van/)).toBeInTheDocument();
+    expect(screen.getByText(/110 kg · 2 ships/)).toBeInTheDocument();
+    expect(screen.getByText(/40 kg · 1 truck$/)).toBeInTheDocument();
     expect(screen.getByText(/75% full/)).toBeInTheDocument();
     expect(screen.getByText(/Round profit:/)).toBeInTheDocument();
     expect(screen.getByText(/\$2,060/)).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe("RoundResult", () => {
     expect(screen.getByText(/460 kg/)).toBeInTheDocument();
   });
 
-  it("renders an old single-mode express result via the fallback fields", () => {
+  it("hides the truck row while the truck is off and unused", () => {
     const result = {
       arrival: 0,
       realizedDemand: 10,
@@ -63,20 +63,27 @@ describe("RoundResult", () => {
       newBackorders: 0,
       onHandEnd: 5,
       orderQty: 80,
-      mode: "express",
-      trucks: 2, // old shape: `trucks` held the van count
-      truckFillPct: 100,
+      consolidatedQty: 80,
+      expressQty: 0,
+      ships: 1,
+      expressTrucks: 0,
+      fleetFillPct: 80,
       revenue: 400,
       purchaseCost: 800,
       holdingCost: 5,
-      truckCost: 240,
-      transportCo2: 500,
+      backorderCost: 0,
+      transportCost: 50,
+      transportCo2: 100,
       storageCo2: 2.5,
-      profit: -645,
-      co2: 502.5
+      profit: -455,
+      co2: 102.5
     };
-    render(<RoundResult result={result} />);
+    const { rerender } = render(<RoundResult result={result} />);
 
-    expect(screen.getByText(/80 kg · 2 vans/)).toBeInTheDocument();
+    expect(screen.getByText(/80 kg · 1 ship$/)).toBeInTheDocument();
+    expect(screen.queryByText("🚚 Truck")).toBeNull();
+
+    rerender(<RoundResult result={result} expressEnabled />);
+    expect(screen.getByText("🚚 Truck")).toBeInTheDocument();
   });
 });

@@ -132,7 +132,9 @@ export async function recordRoundEnded({ gameId, turNo, roundId, realizedDemand,
         backorder_cost: result.backorderCost,
         on_hand_end: result.onHandEnd,
         in_transit: result.inTransit,
-        trucks: result.trucks,
+        // The `trucks` column predates the ship/truck split; it holds the total
+        // number of vehicles (ships + express trucks) dispatched that round.
+        trucks: result.vehicles,
         co2_transport: result.co2Transport,
         co2_storage: result.co2Storage,
         profit: result.profit,

@@ -25,7 +25,7 @@ test("priming round: no sales, opening order arrives with lead time 1", () => {
   assert.equal(result.sold, 0);
   assert.equal(result.newBackorders, 0);
   assert.equal(result.orderQty, 150);
-  assert.equal(result.trucks, 2);
+  assert.equal(result.ships, 2);
   // Opening order sits at pipeline[0] -> arrives next round.
   assert.deepEqual(nextState.pipeline, [150, 0, 0]);
 
@@ -95,40 +95,40 @@ test("ordering zero places nothing and emits no transport cost or CO2", () => {
   const state = { onHand: 200, pipeline: [0, 100] };
   const { result } = advancePeriod(state, config, 0, 0);
   assert.equal(result.orderQty, 0);
-  assert.equal(result.trucks, 0);
+  assert.equal(result.ships, 0);
   assert.equal(result.transportCo2, 0);
-  assert.equal(result.truckCost, 0);
-  assert.equal(result.truckFillPct, null);
+  assert.equal(result.transportCost, 0);
+  assert.equal(result.fleetFillPct, null);
 });
 
 test("negative orders are clamped to zero", () => {
   const state = { onHand: 0, pipeline: [0, 0] };
   const { result } = advancePeriod(state, config, 0, -50);
   assert.equal(result.orderQty, 0);
-  assert.equal(result.trucks, 0);
+  assert.equal(result.ships, 0);
 });
 
-test("truck count is ceil(q / capacity): edges q=1, q=cap, q=cap+1", () => {
+test("ship count is ceil(q / capacity): edges q=1, q=cap, q=cap+1", () => {
   const cases = [
-    { q: 1, trucks: 1 },
-    { q: config.truckCapacity, trucks: 1 },
-    { q: config.truckCapacity + 1, trucks: 2 }
+    { q: 1, ships: 1 },
+    { q: config.shipCapacity, ships: 1 },
+    { q: config.shipCapacity + 1, ships: 2 }
   ];
-  for (const { q, trucks } of cases) {
+  for (const { q, ships } of cases) {
     const state = { onHand: 0, pipeline: [0, 0] };
     const { result } = advancePeriod(state, config, 0, q);
     assert.equal(result.orderQty, q);
-    assert.equal(result.trucks, trucks, `q=${q}`);
-    assert.equal(result.transportCo2, trucks * config.co2PerTruck);
-    assert.equal(result.truckCost, trucks * config.fixedCostPerTruck);
+    assert.equal(result.ships, ships, `q=${q}`);
+    assert.equal(result.transportCo2, ships * config.shipCo2);
+    assert.equal(result.transportCost, ships * config.shipCost);
   }
 });
 
-test("truck fill percentage reflects utilization", () => {
+test("fleet fill percentage reflects utilization", () => {
   const state = { onHand: 0, pipeline: [0, 0] };
   const { result } = advancePeriod(state, config, 0, 150);
-  assert.equal(result.trucks, 2);
-  assert.equal(result.truckFillPct, 75);
+  assert.equal(result.ships, 2);
+  assert.equal(result.fleetFillPct, 75);
 });
 
 test("holding cost and storage CO2 are charged on ending on-hand", () => {
@@ -139,15 +139,15 @@ test("holding cost and storage CO2 are charged on ending on-hand", () => {
   assert.equal(result.storageCo2, 60 * config.co2PerUnitHeld);
 });
 
-test("profit = revenue - purchase - holding - trucks; purchase charged at order time", () => {
+test("profit = revenue - purchase - holding - transport; purchase charged at order time", () => {
   const state = { onHand: 100, pipeline: [0, 0] };
   const { result } = advancePeriod(state, config, 80, 180);
-  // sold 80, onHandEnd 20, q 180, trucks 2
+  // sold 80, onHandEnd 20, q 180, ships 2
   const expected =
     80 * config.price -
     180 * config.unitCost -
     20 * config.holdingCost -
-    2 * config.fixedCostPerTruck;
+    2 * config.shipCost;
   assert.equal(result.profit, expected);
   assert.equal(result.co2, result.transportCo2 + result.storageCo2);
 });
@@ -262,59 +262,59 @@ test("lowering leadTime mid-game lets a new order overtake the pipeline's extra 
   assert.deepEqual(step.nextState.pipeline, [0, 50, 100, 0, 0]);
 });
 
-// ── Delivery legs: consolidated and/or express in the same round ───────────
-// Express uses smaller vans that each cost more and emit more, and it arrives
+// ── Delivery legs: ship (consolidated) and/or express truck in one round ────
+// Express uses smaller trucks that each cost more and emit more, and it arrives
 // the SAME round it is ordered (it never enters the pipeline). The player can
-// ship BOTH legs in one round: `order` rides the truck, options.expressQty
-// rides the van.
+// ship BOTH legs in one round: `order` rides the ship, options.expressQty
+// rides the truck.
 
 test("an order without expressQty is a pure consolidated round", () => {
   const state = createInitialState(config);
   const { result } = advancePeriod(state, config, 0, 100);
   assert.equal(result.mode, "consolidated");
-  assert.equal(result.trucks, 1); // 100 / truckCapacity 100
-  assert.equal(result.vans, 0);
-  assert.equal(result.transportCo2, config.co2PerTruck);
-  assert.equal(result.truckCost, config.fixedCostPerTruck);
+  assert.equal(result.ships, 1); // 100 / shipCapacity 100
+  assert.equal(result.expressTrucks, 0);
+  assert.equal(result.transportCo2, config.shipCo2);
+  assert.equal(result.transportCost, config.shipCost);
 });
 
-test("a pure express order uses van capacity, cost and CO2 — strictly worse per kg", () => {
+test("a pure express order uses truck capacity, cost and CO2 — strictly worse per kg", () => {
   const state = createInitialState(config);
-  // 120 units: consolidated -> ceil(120/100)=2 trucks; express -> ceil(120/40)=3 vans.
+  // 120 units: consolidated -> ceil(120/100)=2 ships; express -> ceil(120/40)=3 trucks.
   const consolidated = advancePeriod(state, config, 0, 120).result;
   const express = advancePeriod(state, config, 0, 0, { expressQty: 120 }).result;
 
   assert.equal(express.mode, "express");
-  assert.equal(express.trucks, 0);
-  assert.equal(express.vans, 3);
-  assert.equal(express.truckCost, 3 * config.expressFixedCost);
+  assert.equal(express.ships, 0);
+  assert.equal(express.expressTrucks, 3);
+  assert.equal(express.transportCost, 3 * config.expressFixedCost);
   assert.equal(express.transportCo2, 3 * config.expressCo2);
   // Express must be both pricier and dirtier for the same order.
-  assert.ok(express.truckCost > consolidated.truckCost);
+  assert.ok(express.transportCost > consolidated.transportCost);
   assert.ok(express.transportCo2 > consolidated.transportCo2);
 });
 
-test("mixed round: transport cost is the sum of the truck and van fleets", () => {
+test("mixed round: transport cost is the sum of the ship and truck fleets", () => {
   const state = createInitialState(config);
-  // 250 consolidated -> 3 trucks; 90 express -> 3 vans.
+  // 250 consolidated -> 3 ships; 90 express -> 3 trucks.
   const { result } = advancePeriod(state, config, 0, 250, { expressQty: 90 });
   assert.equal(result.mode, "mixed");
   assert.equal(result.orderQty, 340);
-  assert.equal(result.trucks, 3);
-  assert.equal(result.vans, 3);
+  assert.equal(result.ships, 3);
+  assert.equal(result.expressTrucks, 3);
   assert.equal(result.vehicles, 6);
   assert.equal(
-    result.truckCost,
-    3 * config.fixedCostPerTruck + 3 * config.expressFixedCost
+    result.transportCost,
+    3 * config.shipCost + 3 * config.expressFixedCost
   );
   // Purchase cost covers the combined quantity.
   assert.equal(result.purchaseCost, 340 * config.unitCost);
 });
 
-test("mixed round: transport CO2 is the sum of the truck and van fleets", () => {
+test("mixed round: transport CO2 is the sum of the ship and truck fleets", () => {
   const state = createInitialState(config);
   const { result } = advancePeriod(state, config, 0, 250, { expressQty: 90 });
-  assert.equal(result.transportCo2, 3 * config.co2PerTruck + 3 * config.expressCo2);
+  assert.equal(result.transportCo2, 3 * config.shipCo2 + 3 * config.expressCo2);
   // The express 90 landed this round and (with zero demand) is now held, so
   // storage CO2 covers it; the consolidated 250 is still in transit.
   assert.equal(result.storageCo2, 90 * config.co2PerUnitHeld);
@@ -323,11 +323,11 @@ test("mixed round: transport CO2 is the sum of the truck and van fleets", () => 
 
 test("mixed round: express leg arrives this round, consolidated leg after leadTime rounds", () => {
   let state = createInitialState(config); // leadTime 2
-  // 200 by truck (arrives in 2 rounds), 80 by van (lands immediately).
+  // 200 by ship (arrives in 2 rounds), 80 by truck (lands immediately).
   let step = advancePeriod(state, config, 0, 200, { expressQty: 80 });
   assert.equal(step.result.arrival, 80); // the express quantity, this round
   assert.equal(step.nextState.onHand, 80); // zero demand -> held
-  assert.deepEqual(step.nextState.pipeline, [0, 200, 0]); // only the truck in transit
+  assert.deepEqual(step.nextState.pipeline, [0, 200, 0]); // only the ship in transit
   state = step.nextState;
 
   // Next round: nothing due yet.
@@ -344,7 +344,7 @@ test("mixed round: express leg arrives this round, consolidated leg after leadTi
 test("express serves this round's demand — a same-round stockout rescue", () => {
   const longer = { ...config, leadTime: 4 };
   const state = createInitialState(longer); // empty warehouse, nothing inbound
-  // Demand 30 hits an empty hub; 40 by express van covers it immediately.
+  // Demand 30 hits an empty hub; 40 by express truck covers it immediately.
   const { result, nextState } = advancePeriod(state, longer, 30, 0, { expressQty: 40 });
   assert.equal(result.arrival, 40);
   assert.equal(result.sold, 30);
@@ -352,7 +352,7 @@ test("express serves this round's demand — a same-round stockout rescue", () =
   assert.equal(nextState.onHand, 10); // the unsold remainder is held
 });
 
-test("a delayed round freezes the pipeline but not the express van", () => {
+test("a delayed round freezes the pipeline but not the express truck", () => {
   const state = createInitialState(config); // pipeline [0,0,0], leadTime 2
   const { result, nextState } = advancePeriod(state, config, 0, 100, {
     expressQty: 40,
@@ -366,16 +366,16 @@ test("a delayed round freezes the pipeline but not the express van", () => {
 
 test("capacityUnits and fill reflect the combined dispatched fleet", () => {
   const state = createInitialState(config);
-  // 50 express units over 40-unit vans -> 2 vans, 80 capacity, 62.5% full.
+  // 50 express units over 40-unit trucks -> 2 trucks, 80 capacity, 62.5% full.
   const pureExpress = advancePeriod(state, config, 0, 0, { expressQty: 50 }).result;
-  assert.equal(pureExpress.vans, 2);
+  assert.equal(pureExpress.expressTrucks, 2);
   assert.equal(pureExpress.capacityUnits, 2 * config.expressCapacity);
-  assert.equal(pureExpress.truckFillPct, (50 / 80) * 100);
+  assert.equal(pureExpress.fleetFillPct, (50 / 80) * 100);
 
-  // Mixed: 250 -> 3 trucks (300u) + 90 -> 3 vans (120u) = 420u for 340 ordered.
+  // Mixed: 250 -> 3 ships (300u) + 90 -> 3 trucks (120u) = 420u for 340 ordered.
   const mixed = advancePeriod(state, config, 0, 250, { expressQty: 90 }).result;
-  assert.equal(mixed.capacityUnits, 3 * config.truckCapacity + 3 * config.expressCapacity);
-  assert.equal(mixed.truckFillPct, (340 / 420) * 100);
+  assert.equal(mixed.capacityUnits, 3 * config.shipCapacity + 3 * config.expressCapacity);
+  assert.equal(mixed.fleetFillPct, (340 / 420) * 100);
 });
 
 // ── Backorders ─────────────────────────────────────────────────────────────
@@ -417,7 +417,7 @@ test("a backlog accrues the penalty every round until it is filled", () => {
   assert.equal(step.result.holdingCost, 10 * config.holdingCost);
 });
 
-test("an express van fills a backlog within the same round", () => {
+test("an express truck fills a backlog within the same round", () => {
   const state = { onHand: -25, pipeline: [0, 0, 0] };
   const { result } = advancePeriod(state, config, 10, 0, { expressQty: 40 });
   assert.equal(result.backlogFilled, 25);

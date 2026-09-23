@@ -66,9 +66,9 @@ const config = {
   unitCost: 10,
   holdingCost: 1,
   backorderCost: 5,
-  truckCapacity: 100,
-  fixedCostPerTruck: 50,
-  co2PerTruck: 100,
+  shipCapacity: 100,
+  shipCost: 50,
+  shipCo2: 100,
   co2PerUnitHeld: 0.5
 };
 const distribution = { type: "uniform", min: 80, max: 120 };
@@ -201,7 +201,7 @@ describe("App", () => {
     expect(await screen.findByText("$3,190")).toBeInTheDocument();
   });
 
-  it("sweeps the truck convoy when the round changes", async () => {
+  it("sweeps the fleet convoy when the round changes", async () => {
     api.startGame.mockResolvedValue({
       gameId: "g1",
       playerId: "p1",
@@ -227,7 +227,7 @@ describe("App", () => {
     await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0));
     const ws = MockWebSocket.instances[0];
 
-    // A round_started event that advances the round id triggers the truck sweep.
+    // A round_started event that advances the round id triggers the fleet sweep.
     await act(async () => {
       ws._emit("message", {
         data: JSON.stringify({
@@ -241,6 +241,6 @@ describe("App", () => {
       });
     });
 
-    await waitFor(() => expect(document.querySelector(".truck-sweep")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector(".fleet-sweep")).not.toBeNull());
   });
 });

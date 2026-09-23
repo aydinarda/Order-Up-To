@@ -1,9 +1,9 @@
-// Express-van decision analysis — the INDIVIDUAL player's call, not a class sweep.
+// Express-truck decision analysis — the INDIVIDUAL player's call, not a class sweep.
 //
 // The in-game choice per round is how to split the order across the two legs;
 // here we compare the pure strategies: "I need to restock ~q this round — send
-// it by consolidated truck (cheap, arrives in L) or by express van (dear +
-// dirty, lands within the same round)?" We simulate one player from a given
+// it by ship (cheap, arrives in L) or by express truck (dear + dirty, lands
+// within the same round)?" We simulate one player from a given
 // starting situation down two branches that differ ONLY in the round-0 vehicle,
 // on the SAME demand draws, then compare (profit, CO2, backorders).
 //
@@ -14,7 +14,7 @@
 //
 // Pedagogical claim under test: express should be a bad call when you are well
 // stocked or when L = 1 (no timing gain), and a rational profit-saving trade-off
-// when your trucks arrive late (high L) and a stockout would otherwise pile up
+// when your ships arrive late (high L) and a stockout would otherwise pile up
 // backorder penalties.
 //
 // Usage: node scripts/express-analysis.js [--reps 800] [--horizon 0=auto]
@@ -51,7 +51,7 @@ function verdict(A, B) {
 }
 
 // One player over `horizon` rounds. Round 0 places the base-stock reorder by
-// `round0Mode`; every later round tops up to S by consolidated truck. The warehouse
+// `round0Mode`; every later round tops up to S by ship. The warehouse
 // opens with `onHand` and an empty pipeline. Same seed ⇒ identical demand across
 // the two branches being compared.
 function runBranch({ config, L, S, onHand, round0Mode, horizon, seed }) {
@@ -64,7 +64,7 @@ function runBranch({ config, L, S, onHand, round0Mode, horizon, seed }) {
     const ip = state.onHand + state.pipeline.reduce((s, q) => s + q, 0);
     const q = Math.max(0, S - ip);
     // Round 0 ships the whole reorder on the branch's vehicle; later rounds
-    // always use the consolidated truck.
+    // always use the ship.
     const useExpress = r === 0 && round0Mode === "express";
     const { nextState, result } = advancePeriod(state, config, demand, useExpress ? 0 : q, {
       leadTime: L,
@@ -79,7 +79,7 @@ function runBranch({ config, L, S, onHand, round0Mode, horizon, seed }) {
 }
 
 // A situation is defined by how much of the lead-time gap the opening stock covers:
-// onHand = cover × L × μ. cover ≥ ~1 means the truck's lateness is harmless (no
+// onHand = cover × L × μ. cover ≥ ~1 means the ship's lateness is harmless (no
 // stockout before it lands); cover < 1 means a loss looms unless you act. Scaling
 // by L keeps "well-stocked" meaning the same thing at every lead time.
 const coverOnHand = (cover, L) => Math.round(cover * L * MU);
@@ -129,8 +129,8 @@ const scenarios = [
 
 console.log(
   `express decision analysis — demand N(${MU},${SIGMA}), reps=${REPS}, ` +
-    `truck(cap ${DEFAULT_CONFIG.truckCapacity}, $${DEFAULT_CONFIG.fixedCostPerTruck}, ` +
-    `${DEFAULT_CONFIG.co2PerTruck}kg), express(cap ${DEFAULT_CONFIG.expressCapacity}, ` +
+    `ship(cap ${DEFAULT_CONFIG.shipCapacity}, $${DEFAULT_CONFIG.shipCost}, ` +
+    `${DEFAULT_CONFIG.shipCo2}kg), express truck(cap ${DEFAULT_CONFIG.expressCapacity}, ` +
     `default $${DEFAULT_CONFIG.expressFixedCost}, ${DEFAULT_CONFIG.expressCo2}kg), ` +
     `margin $${DEFAULT_CONFIG.price - DEFAULT_CONFIG.unitCost}/u`
 );

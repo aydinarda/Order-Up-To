@@ -129,6 +129,8 @@ export function setup() {
     nickname:    'admin_k6',
     adminKey:    ADMIN_KEY,
     handsPerTur: 2,
+    // The express truck is off by default; open it so both legs get exercised.
+    config:      { expressEnabled: true },
   });
   const adminD = j(adminR);
   if (!adminD.gameId || !adminD.adminToken) {
@@ -194,8 +196,8 @@ export function concurrentSubmit(data) {
   const player = data.players[idx];
   const qty    = Math.floor(Math.random() * 41) + 80; // 80–120
 
-  // Two-vehicle order: most rides the consolidated truck; ~30% of players also
-  // split a little onto the express van (arrives same round) to exercise both legs.
+  // Two-vehicle order: most rides the ship; ~30% of players also split a little
+  // onto the express truck (arrives same round) to exercise both legs.
   const useExpress = Math.random() < 0.3;
   const expressQty = useExpress ? Math.floor(Math.random() * 30) + 10 : 0; // 10–39
 
