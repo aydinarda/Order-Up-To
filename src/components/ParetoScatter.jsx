@@ -6,7 +6,8 @@ import { DEFAULT_PARETO_AXES, PARETO_METRICS } from "../../server/utils/pareto.j
 // single-hue ramp over the player's Pareto front (validated against the app
 // surface); the front-1 frontier is connected by a step line. The player's own
 // dot gets an accent ring. Identity is never color-alone: dots are
-// direct-labeled and the leaderboard table sits next to the chart.
+// direct-labeled (collision-free; players on the very same spot share one
+// label) and the leaderboard table sits next to the chart.
 
 // Ordinal single-hue orchard-green ramp over Pareto fronts; the self-dot ring is
 // gold, matching the Orchard & Hazelnut palette.
@@ -19,6 +20,70 @@ const LABEL = "#2c2620";
 
 function frontColor(front) {
   return FRONT_RAMP[Math.min(front - 1, FRONT_RAMP.length - 1)];
+}
+
+// Approximate label box at font-size 11 (slightly generous per character so
+// boxes never underestimate the rendered text).
+const CHAR_WIDTH = 6.4;
+const LABEL_HEIGHT = 13;
+
+// Where a label may sit relative to its dot, in order of preference.
+const LABEL_SLOTS = [
+  { dx: 11, dy: -8, anchor: "start" }, // right, above
+  { dx: 15, dy: 4, anchor: "start" }, // right, level with the dot
+  { dx: 11, dy: 16, anchor: "start" }, // right, below
+  { dx: -11, dy: -8, anchor: "end" }, // left, above
+  { dx: -15, dy: 4, anchor: "end" }, // left, level with the dot
+  { dx: -11, dy: 16, anchor: "end" }, // left, below
+  { dx: 0, dy: -14, anchor: "middle" }, // above
+  { dx: 0, dy: 26, anchor: "middle" } // below
+];
+
+// Greedy, collision-free label placement. `labels` ({ text, cx, cy }) arrive
+// in priority order — the viewing player first — and each takes the first slot
+// that stays inside `bounds` and clears every label placed before it. Slots
+// that also keep clear of other dots (`dots`: [{ cx, cy }]) are preferred, so a
+// name is not read as belonging to a neighbour; one covering a dot is used only
+// when nothing else fits. A label with no free slot is dropped: the name is
+// still in the dot's tooltip and the leaderboard table.
+// Keep-out radius around a dot (r 7 + its white stroke), and around the
+// viewing player's gold ring (r 11).
+const DOT_RADIUS = 9;
+const SELF_RING_RADIUS = 13;
+
+export function placeLabels(labels, bounds, dots = []) {
+  const boxes = [];
+  const placed = [];
+  const overlaps = (a, b) => !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+  const dotBoxes = dots.map((d) => {
+    const r = d.isSelf ? SELF_RING_RADIUS : DOT_RADIUS;
+    return { cx: d.cx, cy: d.cy, left: d.cx - r, right: d.cx + r, top: d.cy - r, bottom: d.cy + r };
+  });
+
+  for (const label of labels) {
+    const w = label.text.length * CHAR_WIDTH;
+    const candidates = LABEL_SLOTS.map((slot) => {
+      const x = label.cx + slot.dx;
+      const y = label.cy + slot.dy;
+      const left = slot.anchor === "start" ? x : slot.anchor === "end" ? x - w : x - w / 2;
+      return { slot, x, y, box: { left, right: left + w, top: y - LABEL_HEIGHT + 3, bottom: y + 3 } };
+    }).filter(
+      ({ box }) =>
+        box.left >= bounds.left &&
+        box.right <= bounds.right &&
+        box.top >= bounds.top &&
+        box.bottom <= bounds.bottom &&
+        boxes.every((b) => !overlaps(box, b))
+    );
+    const coversDot = ({ box }) =>
+      dotBoxes.some((d) => !(d.cx === label.cx && d.cy === label.cy) && overlaps(box, d));
+    const choice = candidates.find((c) => !coversDot(c)) || candidates[0];
+    if (choice) {
+      boxes.push(choice.box);
+      placed.push({ ...label, x: choice.x, y: choice.y, anchor: choice.slot.anchor });
+    }
+  }
+  return placed;
 }
 
 // ~4 round-numbered ticks spanning [min, max].
@@ -127,7 +192,39 @@ function ParetoScatter({ rows, selfNickname, axes = DEFAULT_PARETO_AXES, control
     }
   });
 
+  // Dots in rank order; players landing on the same pixel (identical KPIs,
+  // e.g. bots on one strategy, or all but identical) get one label: "Green03 +9".
+  const points = playable.map((row) => ({
+    row,
+    cx: x(xOf(row)),
+    cy: y(yOf(row)),
+    isSelf: Boolean(selfNickname) && row.nickname === selfNickname
+  }));
+  const spots = new Map();
+  for (const point of points) {
+    const key = `${Math.round(point.cx)},${Math.round(point.cy)}`;
+    if (!spots.has(key)) spots.set(key, []);
+    spots.get(key).push(point);
+  }
+  const spotOf = (point) => spots.get(`${Math.round(point.cx)},${Math.round(point.cy)}`);
+
+  // Label everyone in a small class; otherwise front 1 and the viewing player.
   const labelAll = playable.length <= 10;
+  const labelCandidates = [...spots.values()]
+    .filter((group) => group.some((p) => labelAll || p.row.front === 1 || p.isSelf))
+    .map((group) => {
+      const lead = group.find((p) => p.isSelf) || group[0];
+      const text =
+        `${lead.row.nickname}${lead.isSelf ? " (you)" : ""}` + (group.length > 1 ? ` +${group.length - 1}` : "");
+      return { text, cx: lead.cx, cy: lead.cy, isSelf: group.some((p) => p.isSelf) };
+    })
+    .sort((a, b) => Number(b.isSelf) - Number(a.isSelf));
+  const labels = placeLabels(
+    labelCandidates,
+    { left: margin.left, right: width, top: 0, bottom: margin.top + plotH },
+    points
+  );
+
   const maxFront = Math.max(...playable.map((r) => r.front || 1));
   const legendFronts = Array.from({ length: Math.min(maxFront, 3) }, (_, i) => i + 1);
 
@@ -232,13 +329,12 @@ function ParetoScatter({ rows, selfNickname, axes = DEFAULT_PARETO_AXES, control
         )}
 
         {/* dots */}
-        {playable.map((row) => {
-          const isSelf = selfNickname && row.nickname === selfNickname;
-          const cx = x(xOf(row));
-          const cy = y(yOf(row));
-          // Dots in the right quarter label to their left so names never run
-          // off the chart edge.
-          const labelLeft = cx > margin.left + plotW * 0.75;
+        {points.map((point) => {
+          const { row, cx, cy, isSelf } = point;
+          const others = spotOf(point).filter((p) => p !== point).map((p) => p.row.nickname);
+          const alsoHere = others.length
+            ? `\nAlso here: ${others.slice(0, 8).join(", ")}${others.length > 8 ? ", …" : ""}`
+            : "";
           return (
             <g key={row.nickname} data-testid="pareto-dot">
               {isSelf && (
@@ -253,25 +349,32 @@ function ParetoScatter({ rows, selfNickname, axes = DEFAULT_PARETO_AXES, control
                 strokeWidth="2"
               >
                 <title>
-                  {`${row.nickname} — front ${row.front}, ${yMetric.label} ${formatValue(yMetric, yOf(row))}, ${xMetric.label} ${formatValue(xMetric, xOf(row))}`}
+                  {`${row.nickname} — front ${row.front}, ${yMetric.label} ${formatValue(yMetric, yOf(row))}, ${xMetric.label} ${formatValue(xMetric, xOf(row))}${alsoHere}`}
                 </title>
               </circle>
-              {(labelAll || row.front === 1 || isSelf) && (
-                <text
-                  x={labelLeft ? cx - 11 : cx + 11}
-                  y={cy - 8}
-                  textAnchor={labelLeft ? "end" : "start"}
-                  fontSize="11"
-                  fontWeight={isSelf ? "700" : "400"}
-                  fill={LABEL}
-                >
-                  {row.nickname}
-                  {isSelf ? " (you)" : ""}
-                </text>
-              )}
             </g>
           );
         })}
+
+        {/* labels on top of every dot, with a surface-colored halo so they stay
+            readable over grid lines and neighbouring dots */}
+        {labels.map((label) => (
+          <text
+            key={label.text}
+            x={label.x}
+            y={label.y}
+            textAnchor={label.anchor}
+            fontSize="11"
+            fontWeight={label.isSelf ? "700" : "400"}
+            fill={LABEL}
+            stroke={SURFACE}
+            strokeWidth="3"
+            paintOrder="stroke"
+            data-testid="pareto-label"
+          >
+            {label.text}
+          </text>
+        ))}
       </svg>
 
       <div className="pareto-legend">

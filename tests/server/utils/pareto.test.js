@@ -4,6 +4,7 @@ import {
   computeParetoFronts,
   DEFAULT_PARETO_AXES,
   isValidParetoAxes,
+  PARETO_METRICS,
   paretoAxesFromConfig
 } from "../../../server/utils/pareto.js";
 
@@ -143,4 +144,28 @@ test("axis validation and config fallback", () => {
   });
   assert.deepEqual(paretoAxesFromConfig({}), DEFAULT_PARETO_AXES);
   assert.deepEqual(paretoAxesFromConfig(null), DEFAULT_PARETO_AXES);
+});
+
+test("swapping a pair's axes never changes the ranking (KPI priority breaks ties)", () => {
+  const rows = [
+    kpis("idle", { profit: -20000, co2: 60, backorders: 1000, service: 9 }),
+    kpis("green", { profit: 30000, co2: 1700, backorders: 180, service: 84 }),
+    kpis("top", { profit: 34000, co2: 2000, backorders: 60, service: 95 }),
+    kpis("mid", { profit: 31000, co2: 1800, backorders: 250, service: 78 }),
+    kpis("safe", { profit: 30500, co2: 2500, backorders: 0, service: 100 })
+  ];
+  const ids = Object.keys(PARETO_METRICS);
+  for (const a of ids) {
+    for (const b of ids) {
+      if (a >= b) continue;
+      const one = computeParetoFronts(rows, { x: a, y: b }).map((r) => r.nickname);
+      const other = computeParetoFronts(rows, { x: b, y: a }).map((r) => r.nickname);
+      assert.deepEqual(one, other, `${a}/${b} ranking depends on axis orientation`);
+    }
+  }
+  // Profit outranks CO2 even with CO2 on the Y axis: the idle player (lowest
+  // CO2, heavy loss) shares front 1 but is not ranked first.
+  const ranked = computeParetoFronts(rows, { x: "profit", y: "co2" });
+  assert.equal(ranked[0].nickname, "top");
+  assert.equal(ranked.find((r) => r.nickname === "idle").front, 1);
 });

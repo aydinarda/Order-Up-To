@@ -1,4 +1,8 @@
+// null = no result (e.g. joined after the game ended).
 function formatMoney(value) {
+  if (value == null) {
+    return "—";
+  }
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -11,7 +15,8 @@ function formatCo2(value) {
 }
 
 // Ranked by Pareto front first (front 1 = undominated on the chosen pair of
-// KPIs, CO2 vs profit by default), then by the Y-axis KPI within a front.
+// KPIs, CO2 vs profit by default), then within a front by the pair's
+// higher-priority KPI (profit > service level > backorders > CO2).
 // `caption` names the pair the fronts were computed on.
 function Leaderboard({ rows, title, caption }) {
   const hasFronts = rows.some((row) => row.front !== undefined);
@@ -45,7 +50,7 @@ function Leaderboard({ rows, title, caption }) {
                 {hasFronts && <td>{row.front}</td>}
                 <td>{row.nickname}</td>
                 <td>{formatMoney(row.cumulativeProfit)}</td>
-                {hasFronts && <td>{row.cumCo2 !== undefined ? formatCo2(row.cumCo2) : "—"}</td>}
+                {hasFronts && <td>{row.cumCo2 != null ? formatCo2(row.cumCo2) : "—"}</td>}
                 {hasFronts && (
                   <td>{row.serviceLevelPct != null ? `${Math.round(row.serviceLevelPct)}%` : "—"}</td>
                 )}

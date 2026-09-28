@@ -12,7 +12,13 @@
     "test:watch": "vitest",
     "build": "vite build",
     "preview": "vite preview",
-    "analyze:express": "node scripts/express-analysis.js"
+    "analyze:express": "node scripts/express-analysis.js",
+    "game:classroom": "k6 run --env BASE_URL=http://localhost:4000 k6/game_classroom.js",
+    "ci:e2e": "BASE_URL=http://localhost:4000 python3 scripts/ci/e2e_game.py",
+    "ci:load-sim": "BASE_URL=http://localhost:4000 RESULTS_DIR=results python3 scripts/ci/load_sim.py",
+    "k6:load": "k6 run --env BASE_URL=http://localhost:4000 k6/game_load_test.js",
+    "k6:full": "k6 run --env BASE_URL=http://localhost:4000 k6/game_full_session.js",
+    "k6:stress": "k6 run --env BASE_URL=http://localhost:4000 k6/game_stress_test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

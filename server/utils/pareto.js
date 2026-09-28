@@ -8,15 +8,22 @@
 // better on at least one. Identical points never dominate each other, so a
 // class that all copied one strategy lands together on front 1.
 // O(n^2) per layer is fine for classroom sizes (<= a few hundred players).
+//
+// Within a front, players are ordered by the pair's higher-`priority` KPI
+// (profit > service level > backorders > CO2), then by the other — never by
+// which KPI happens to sit on which chart axis, so swapping the axes of a pair
+// leaves the ranking unchanged.
 
 // The KPIs a Pareto chart can use. `key` is the leaderboard row field; `goal`
-// says which way is better; `min`/`max` bound the chart axis.
+// says which way is better; `priority` breaks ties within a front (1 first);
+// `min`/`max` bound the chart axis.
 export const PARETO_METRICS = {
   profit: {
     key: "cumProfit",
     label: "Cumulative profit",
     unit: "$",
     goal: "max",
+    priority: 1,
     better: "more profit"
   },
   serviceLevel: {
@@ -24,6 +31,7 @@ export const PARETO_METRICS = {
     label: "Service level",
     unit: "%",
     goal: "max",
+    priority: 2,
     better: "higher service level",
     min: 0,
     max: 100
@@ -33,6 +41,7 @@ export const PARETO_METRICS = {
     label: "Backorders",
     unit: "units",
     goal: "min",
+    priority: 3,
     better: "fewer backorders",
     min: 0
   },
@@ -41,6 +50,7 @@ export const PARETO_METRICS = {
     label: "Cumulative CO₂",
     unit: "kg",
     goal: "min",
+    priority: 4,
     better: "less CO₂",
     min: 0
   }
@@ -70,8 +80,8 @@ function score(row, metricId) {
 }
 
 // Annotates each row with a 1-based `front` for the given pair and returns the
-// rows sorted by (front asc, then best Y, then best X). Input rows are not
-// mutated.
+// rows sorted by (front asc, then the higher-priority KPI, then the other).
+// Input rows are not mutated.
 export function computeParetoFronts(rows, axes = DEFAULT_PARETO_AXES) {
   const remaining = rows.map((row) => ({
     row: { ...row },
@@ -79,6 +89,9 @@ export function computeParetoFronts(rows, axes = DEFAULT_PARETO_AXES) {
     y: score(row, axes.y)
   }));
   const dominates = (a, b) => a.x >= b.x && a.y >= b.y && (a.x > b.x || a.y > b.y);
+  // Tie-break within a front by KPI priority, independent of axis orientation.
+  const xFirst = PARETO_METRICS[axes.x].priority < PARETO_METRICS[axes.y].priority;
+  const withinFront = xFirst ? (a, b) => b.x - a.x || b.y - a.y : (a, b) => b.y - a.y || b.x - a.x;
   const sorted = [];
   let front = 1;
 
@@ -90,7 +103,7 @@ export function computeParetoFronts(rows, axes = DEFAULT_PARETO_AXES) {
     for (let i = remaining.length - 1; i >= 0; i -= 1) {
       if (!dominated[i]) remaining.splice(i, 1);
     }
-    currentFront.sort((a, b) => b.y - a.y || b.x - a.x);
+    currentFront.sort(withinFront);
     for (const entry of currentFront) {
       entry.row.front = front;
       sorted.push(entry.row);

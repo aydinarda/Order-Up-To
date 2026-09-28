@@ -20,9 +20,17 @@ on:
         required: false
         default: "3"
       restart_at_round:
-        description: "Restart the game after this round, then replay the full 30 rounds"
+        description: "Restart the game after this round, then replay the full game (0 = no restart)"
         required: false
         default: "2"
+      players:
+        description: "Number of bot players (order-up-to personas)"
+        required: false
+        default: "100"
+      rounds:
+        description: "Rounds in the full game"
+        required: false
+        default: "30"
 
 env:
   BASE_URL:         ${{ inputs.server_url      || secrets.RENDER_URL || 'https://simplenewsvendorgame.onrender.com' }}
@@ -30,6 +38,8 @@ env:
   ROUND_WINDOW:     ${{ inputs.round_window    || '25' }}
   REVIEW_GAP:       ${{ inputs.review_gap      || '3' }}
   RESTART_AT_ROUND: ${{ inputs.restart_at_round || '2' }}
+  PLAYERS:          ${{ inputs.players         || '100' }}
+  ROUNDS:           ${{ inputs.rounds          || '30' }}
   # DURATION is intentionally unset: the script auto-computes the full session length
   # from (RESTART_AT_ROUND + 30) rounds x (ROUND_WINDOW + REVIEW_GAP) so players cover
   # the warm-up rounds, the restart, and the whole replayed ~16.5 min game.
@@ -81,6 +91,8 @@ jobs:
             --env ROUND_WINDOW="$ROUND_WINDOW" \
             --env REVIEW_GAP="$REVIEW_GAP" \
             --env RESTART_AT_ROUND="$RESTART_AT_ROUND" \
+            --env PLAYERS="$PLAYERS" \
+            --env ROUNDS="$ROUNDS" \
             --summary-export=k6-summary.json \
             --out json=k6-results.ndjson \
             k6/game_full_session.js
@@ -132,6 +144,7 @@ jobs:
           print("-" * 56)
           print(f"  poll_latency     avg={stat('poll_latency','avg')}ms  p95={stat('poll_latency','p(95)')}ms")
           print(f"  submit_latency   avg={stat('submit_latency','avg')}ms  p95={stat('submit_latency','p(95)')}ms")
+          print(f"  rerank_latency   avg={stat('rerank_latency','avg')}ms  p95={stat('rerank_latency','p(95)')}ms")
           print(f"  game_errors(5xx) {stat('game_errors','count')}")
           print(f"  http_reqs total  {stat('http_reqs','count')}")
           print(f"  http_req_failed  {stat('http_req_failed','rate')}")
@@ -145,6 +158,10 @@ jobs:
           print(f"  submit_accepted       {stat('submit_accepted','count')}")
           print(f"  submit_duplicate_400  {stat('submit_duplicate_rejected','count')}")
           print(f"  submit_rate_limited   {stat('submit_rate_limited','count')}")
+          print(f"  stock_adds            {stat('stock_adds','count')}")
+          print(f"  pareto_switches       {stat('pareto_switches','count')}")
+          print(f"  truck_toggles         {stat('truck_toggles','count')}")
+          print(f"  checks passed         {stat('checks','rate')}")
           print("-" * 56)
           EOF
 

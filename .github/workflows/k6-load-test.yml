@@ -18,7 +18,7 @@ env:
 
 jobs:
   k6:
-    name: "poll_storm / concurrent_submit / health_storm / spike_join"
+    name: "poll_storm / concurrent_submit / health_storm / spike_join / admin_ops"
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -115,6 +115,10 @@ jobs:
           print(f"  submit_latency   avg={stat('submit_latency','avg')}ms  p95={stat('submit_latency','p(95)')}ms")
           print(f"  poll_latency     avg={stat('poll_latency','avg')}ms  p95={stat('poll_latency','p(95)')}ms")
           print(f"  join_latency     avg={stat('join_latency','avg')}ms  p95={stat('join_latency','p(95)')}ms")
+          print(f"  rerank_latency   avg={stat('rerank_latency','avg')}ms  p95={stat('rerank_latency','p(95)')}ms")
+          print(f"  pareto_switches  {stat('pareto_switches','count')}")
+          print(f"  stock_adds       {stat('stock_adds','count')}")
+          print(f"  checks passed    {stat('checks','rate')}")
           print(f"  game_errors      {stat('game_errors','count')}")
           print(f"  http_reqs total  {stat('http_reqs','count')}")
           print(f"  http_req_failed  {stat('http_req_failed','rate')}")

@@ -12,7 +12,12 @@
  *   - abusers   : weird heavy traffic at an increasing rate — no-sleep game-state
  *                 hammering, repeated O(N) /leaderboard reads, huge order spam.
  *   - admin     : drives rounds and measures how long /end-round takes as load
- *                 climbs (the clearest "server is choking" signal).
+ *                 climbs (the clearest "server is choking" signal). Every round it
+ *                 also re-ranks the leaderboard on another Pareto pair MID-ROUND
+ *                 (rerank_latency — the O(n²) Pareto sort over a Map that churn
+ *                 keeps growing) and every 5th round adds stock to everyone.
+ *   - players decide with the order-up-to personas from lib/bots.js; abusers
+ *     also fire admin calls with a forged token (must be 403).
  *
  * Thresholds are intentionally tight: they WILL cross as the server degrades —
  * that is the point. The workflow is informational and reports where it broke.
@@ -24,18 +29,27 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Trend, Counter } from "k6/metrics";
-
-const BASE = (__ENV.BASE_URL || "https://simplenewsvendorgame.onrender.com").replace(/\/$/, "");
-const ADMIN_KEY = __ENV.ADMIN_KEY || "admin123";
-const HDR = { headers: { "Content-Type": "application/json" } };
+import {
+  ADMIN_KEY,
+  BASE,
+  HDR,
+  PARETO_PAIRS,
+  addStock,
+  botName,
+  decideOrder,
+  j,
+  personaFor,
+  post,
+  setPareto
+} from "./lib/bots.js";
 
 const N_PLAYERS = Number(__ENV.PLAYERS || 300);
 const N_ROUNDS = Number(__ENV.ROUNDS || 20);
 const PLAY_WINDOW = Number(__ENV.PLAY_WINDOW || 8); // seconds players get to submit per round
 const SEG = __ENV.SEG || "60s"; // duration of one ramp segment
 
-// 400/404/409/429 are expected under abuse; keep them out of http_req_failed (real failures = 5xx/timeout).
-http.setResponseCallback(http.expectedStatuses(200, 400, 404, 409, 429));
+// 400/403/404/409/429 are expected under abuse; keep them out of http_req_failed (real failures = 5xx/timeout).
+http.setResponseCallback(http.expectedStatuses(200, 400, 403, 404, 409, 429));
 
 // ── Custom metrics ──────────────────────────────────────────────────────────
 const pollLatency = new Trend("poll_latency", true);
@@ -119,28 +133,10 @@ export const options = {
     http_req_failed: ["rate<0.05"],
     game_errors: ["count<100"],
     poll_latency: ["p(95)<3000"],
-    end_round_latency: ["p(95)<5000"]
+    end_round_latency: ["p(95)<5000"],
+    rerank_latency: ["p(95)<3000"]
   }
 };
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-function post(path, body) {
-  return http.post(`${BASE}${path}`, JSON.stringify(body), HDR);
-}
-function j(res) {
-  try {
-    return JSON.parse(res.body) || {};
-  } catch {
-    return {};
-  }
-}
-function chooseOrder(distribution) {
-  const d = distribution || {};
-  let center = 100;
-  if (d.type === "normal" && typeof d.mean === "number") center = d.mean;
-  else if (typeof d.min === "number" && typeof d.max === "number") center = (d.min + d.max) / 2;
-  return Math.max(1, Math.round(center + (Math.random() * 0.8 - 0.4) * center));
-}
 
 // ── Setup: create the game + N_PLAYERS base players ─────────────────────────
 export function setup() {
@@ -167,8 +163,8 @@ export function setup() {
 
   const players = [];
   for (let i = 0; i < N_PLAYERS; i++) {
-    const d = j(post("/start-game", { nickname: `S${String(i + 1).padStart(4, "0")}`, gameId: admin.gameId }));
-    if (d.playerId) players.push({ playerId: d.playerId });
+    const d = j(post("/start-game", { nickname: botName(i, 4), gameId: admin.gameId }));
+    if (d.playerId) players.push({ playerId: d.playerId, persona: personaFor(i) });
     if ((i + 1) % 50 === 0) console.log(`setup: ${players.length}/${i + 1} players joined so far`);
   }
   // Tolerant: a stress test should still run even if some setup joins fail.
@@ -186,10 +182,15 @@ export function driveGame(data) {
 
   for (let r = 0; r < N_ROUNDS; r++) {
     post("/set-distribution", { gameId, adminToken, ...DISTRIBUTIONS[r % DISTRIBUTIONS.length] });
+    if (r % 5 === 0) addStock(gameId, adminToken, 50);
     const sr = post("/start-round", { gameId, adminToken });
     if (j(sr).roundPhase !== "active") gameErrors.add(1);
 
-    sleep(PLAY_WINDOW);
+    // Mid-round: re-rank the (growing) leaderboard on another Pareto pair.
+    sleep(PLAY_WINDOW / 2);
+    const [x, y] = PARETO_PAIRS[(r + 1) % PARETO_PAIRS.length];
+    setPareto(gameId, adminToken, x, y);
+    sleep(PLAY_WINDOW / 2);
 
     const t0 = Date.now();
     const er = post("/end-round", { gameId, adminToken });
@@ -222,9 +223,7 @@ export function playerLoop(data) {
   }
 
   if (gs.roundPhase === "active" && gs.player && !gs.player.submittedThisRound) {
-    const orderQty = chooseOrder(gs.distribution);
-    // ~30% also split a little onto the express truck (same-round arrival).
-    const expressQty = Math.random() < 0.3 ? Math.floor(Math.random() * 30) + 10 : 0;
+    const { orderQty, expressQty } = decideOrder(player.persona, gs);
     const s0 = Date.now();
     const r = post("/submit-order", { gameId: data.gameId, playerId: player.playerId, orderQty, expressQty });
     submitLatency.add(Date.now() - s0);
@@ -265,11 +264,18 @@ export function abuser(data) {
   } else if (roll < 0.7) {
     // Hammer the O(N) leaderboard (grows with churn).
     res = http.get(`${BASE}/leaderboard?gameId=${data.gameId}`, HDR);
-  } else if (roll < 0.9) {
+  } else if (roll < 0.85) {
     // Huge / odd order spam (validated + rate-limited, but still load).
     const p = data.players[Math.floor(Math.random() * data.players.length)];
     res = post("/submit-order", { gameId: data.gameId, playerId: p.playerId, orderQty: Math.floor(Math.random() * 1e9) + 1 });
     if (j(res).error === undefined && res.status === 429) submitRateLimited.add(1);
+  } else if (roll < 0.9) {
+    // Forged admin calls: adding stock / re-ranking without the admin token.
+    res =
+      Math.random() < 0.5
+        ? post("/add-stock", { gameId: data.gameId, adminToken: "forged", qty: 1000 })
+        : post("/set-config", { gameId: data.gameId, adminToken: "forged", paretoX: "backorders" });
+    check(res, { "forged admin call refused (403)": (x) => x.status === 403 });
   } else {
     res = http.get(`${BASE}/health`, HDR);
   }

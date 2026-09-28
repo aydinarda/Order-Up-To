@@ -127,11 +127,24 @@ Five workflows in `.github/workflows/`:
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `e2e.yml` | Push to `main`, manual | Plays a full game against the live backend via API |
-| `k6-load-test.yml` | Manual | k6 load test — 100 VUs, 4 scenarios (poll storm, concurrent submit, health storm, spike join) |
-| `k6-full-session.yml` | Manual | k6 full session — 100 players × 30 rounds with a mid-game restart |
-| `k6-stress-test.yml` | Manual | k6 limit finder — 300 players plus churn and abusive clients |
-| `load-sim.yml` | Manual | Python async simulation with 50 and 100 concurrent players |
+| `e2e.yml` | Push to `main`, manual | Plays a full game via API (`scripts/ci/e2e_game.py`): opening stock, priming round, truck closed → opened, ship + truck orders, mid-round Pareto switch, leaderboard KPIs, error cases, restart |
+| `k6-load-test.yml` | Manual | k6 load test — 100 VUs, 5 scenarios (poll storm, concurrent submit, health storm, spike join, admin re-ranking the Pareto pair mid-round) |
+| `k6-full-session.yml` | Manual | k6 full session — 100 players × 30 rounds with a mid-game restart; the admin adds stock, toggles the truck, changes costs and switches the Pareto pair mid-round |
+| `k6-stress-test.yml` | Manual | k6 limit finder — 300 players plus churn and abusive clients (incl. forged admin calls); measures `/end-round` and Pareto re-rank latency as load climbs |
+| `load-sim.yml` | Manual | Python simulation with 50 and 100 concurrent players (`scripts/ci/load_sim.py`), report per bot persona |
+
+Bots in every script play one of five order-up-to personas (`k6/lib/bots.js`, mirrored in `load_sim.py`), deciding from their own stock, pipeline and added stock: **Base** (base-stock), **Safe** (high service), **Green** (full ships only, low CO₂), **Truck** (rescues shortfalls by truck) and **Naive** (orders the mean ± 40%). Their nicknames carry the persona (`Base01`, `Green03`, …).
+
+### Run locally
+
+Start the backend (`node server/index.js`) — each run below replaces the active game. The Python scripts need only the standard library (Python ≥ 3.9); the k6 ones need [k6](https://k6.io/docs/get-started/installation/).
+
+| Command | What it does |
+|---|---|
+| `npm run game:classroom` | A playable 50-person class: a bot admin runs 12 rounds (30 s + 10 s review), 48 bots play and you join from the browser as a player (do **not** tick admin). Logs one line per round with your standing. Tune with `PLAYERS`, `ROUNDS`, `ROUND_WINDOW`, `REVIEW_GAP`, `JOIN_WAIT` env vars |
+| `npm run ci:e2e` | The E2E workflow's game |
+| `npm run ci:load-sim` | The simulation workflow (`N_PLAYERS=50 N_HANDS=8` by default); reports land in `results/` |
+| `npm run k6:load` / `k6:full` / `k6:stress` | The k6 workflows; e.g. `PLAYERS=20 ROUNDS=4 ROUND_WINDOW=3 REVIEW_GAP=1 npm run k6:full` for a quick pass |
 
 ### Required GitHub Secrets
 

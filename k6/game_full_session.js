@@ -14,10 +14,16 @@
  *     the real WebSocket-push client does on a `game_restarted` event.
  *   - EXTENSION: if a game's configured hands run out before 30 rounds, the admin calls
  *     /one-more-hand to reopen it and keeps going (a safe fallback regardless of the cap).
+ *   - ADMIN FEATURES: every game instance opens with stock added to every warehouse
+ *     (+30 more mid-game), the truck is switched on/off, per-unit shipping cost and the
+ *     backorder penalty change, and the leaderboard's Pareto pair is switched MID-ROUND
+ *     (allowed) while a mid-round price change must still be refused (checked).
  *   - The players (100 VUs) behave like real users: they refresh /game-state at a
  *     RELAXED cadence (the real client is WebSocket-push driven, not a 1s poller),
  *     submit one order while a round is active, and occasionally browse the leaderboard.
- *     ~25% are "active" users who keep hitting endpoints throughout the waits.
+ *     Orders come from five order-up-to personas (lib/bots.js) that read their own
+ *     stock, pipeline and added stock. ~25% are "active" users who keep hitting
+ *     endpoints throughout the waits.
  *
  * The long windows let you JOIN the same game in a browser and watch for latency while
  * the load runs. Point both at the same backend:
@@ -25,19 +31,30 @@
  *   browser: http://localhost:5173  (joins the active game the load test created)
  *
  * Tune the pacing:  --env ROUND_WINDOW=60  --env REVIEW_GAP=8  --env RESTART_AT_ROUND=2
+ * Size:             --env PLAYERS=100  --env ROUNDS=30  (RESTART_AT_ROUND=0 skips the restart)
  */
 
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Trend, Counter } from "k6/metrics";
+import {
+  ADMIN_KEY,
+  PARETO_PAIRS,
+  addStock,
+  botName,
+  decideOrder,
+  get,
+  j,
+  personaFor,
+  post,
+  setPareto,
+  setTruck
+} from "./lib/bots.js";
 
-const BASE = (__ENV.BASE_URL || "https://simplenewsvendorgame.onrender.com").replace(/\/$/, "");
-const ADMIN_KEY = __ENV.ADMIN_KEY || "admin123";
-const HDR = { headers: { "Content-Type": "application/json" } };
-
-const N_PLAYERS = 100;
-const N_ROUNDS = 30; // full game length (replayed after the mid-game restart)
-const RESTART_AT_ROUND = Number(__ENV.RESTART_AT_ROUND || 2); // restart fires after this round, then the full game replays
+const N_PLAYERS = Number(__ENV.PLAYERS || 100);
+const N_ROUNDS = Number(__ENV.ROUNDS || 30); // full game length (replayed after the mid-game restart)
+// Restart fires after this round, then the full game replays; 0 = no restart.
+const RESTART_AT_ROUND = Number(__ENV.RESTART_AT_ROUND ?? 2);
 const ROUND_WINDOW = Number(__ENV.ROUND_WINDOW || 25); // seconds a round stays active (~1 min to decide + submit)
 const REVIEW_GAP = Number(__ENV.REVIEW_GAP || 3); // seconds between rounds (players review results/leaderboard)
 // Total rounds driven = a few warm-up rounds before the restart + the full replayed game.
@@ -105,28 +122,8 @@ export const options = {
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function post(path, body) {
-  return http.post(`${BASE}${path}`, JSON.stringify(body), HDR);
-}
-function j(res) {
-  try {
-    return JSON.parse(res.body) || {};
-  } catch {
-    return {};
-  }
-}
 function describe(d) {
   return d.type === "normal" ? `normal(μ=${d.mean},σ=${d.stdDev})` : `uniform[${d.min},${d.max}]`;
-}
-
-// Crude newsvendor: order around the distribution center with +/-40% noise.
-function chooseOrder(distribution) {
-  const d = distribution || {};
-  let center = 100;
-  if (d.type === "normal" && typeof d.mean === "number") center = d.mean;
-  else if (typeof d.min === "number" && typeof d.max === "number") center = (d.min + d.max) / 2;
-  const noise = (Math.random() * 0.8 - 0.4) * center;
-  return Math.max(1, Math.round(center + noise));
 }
 
 // Drive a single round end to end. `state` carries the live gameId/adminToken (which the
@@ -142,13 +139,27 @@ function driveOneRound(state, roundNo, total, dist) {
   const sd = post("/set-distribution", { gameId: state.gameId, adminToken: state.adminToken, ...dist });
   check(sd, { "set-distribution 200": (x) => x.status === 200 });
 
-  // Occasionally change economy config too (variety).
+  // Every game instance opens with stock added to every warehouse; a smaller
+  // top-up lands mid-game.
+  if (state.roundsThisGame === 0) addStock(state.gameId, state.adminToken, 100);
+  else if (roundNo % 10 === 5) addStock(state.gameId, state.adminToken, 30);
+
+  // Switch the truck on/off every few rounds.
+  if (roundNo % 6 === 3) {
+    state.truckOn = !state.truckOn;
+    setTruck(state.gameId, state.adminToken, state.truckOn);
+  }
+
+  // Occasionally change economy config too (variety), incl. per-unit shipping
+  // cost and the backorder penalty.
   if (roundNo % 4 === 1) {
     post("/set-config", {
       gameId: state.gameId,
       adminToken: state.adminToken,
       price: 35 + (roundNo % 3) * 5,
-      shipCo2: 100 + (roundNo % 3) * 20
+      shipCo2: 100 + (roundNo % 3) * 20,
+      shipCostPerUnit: (roundNo % 3) * 0.5,
+      backorderCost: 5 + (roundNo % 2) * 2
     });
   }
 
@@ -156,19 +167,31 @@ function driveOneRound(state, roundNo, total, dist) {
   if (j(sr).roundPhase !== "active") gameErrors.add(1);
 
   // ~1 minute window: players think, submit, and browse while traffic keeps flowing.
-  sleep(ROUND_WINDOW);
+  // Halfway through, the leaderboard's Pareto pair is switched (allowed mid-round);
+  // an economy change at the same moment must still be refused.
+  sleep(ROUND_WINDOW / 2);
+  const [x, y] = PARETO_PAIRS[roundNo % PARETO_PAIRS.length];
+  setPareto(state.gameId, state.adminToken, x, y);
+  const midPrice = post("/set-config", { gameId: state.gameId, adminToken: state.adminToken, price: 99 });
+  check(midPrice, { "mid-round price change refused (400)": (r) => r.status === 400 });
+  sleep(ROUND_WINDOW / 2);
 
   const er = j(post("/end-round", { gameId: state.gameId, adminToken: state.adminToken }));
   state.roundsThisGame += 1;
   roundsDriven.add(1);
-  console.log(`Round ${roundNo}/${total} | ${describe(dist)} | demand=${er.realizedDemand} | finished=${er.finished}`);
+  const leader = (er.leaderboard || [])[0];
+  console.log(
+    `Round ${roundNo}/${total} | ${describe(dist)} | demand=${er.realizedDemand ?? "— (priming)"} | ` +
+      `truck=${state.truckOn ? "on" : "off"} | pareto=${er.config?.paretoY}/${er.config?.paretoX} | ` +
+      `leader=${leader?.nickname} | finished=${er.finished}`
+  );
 }
 
 // ── Setup: create the game + 100 players ────────────────────────────────────
 export function setup() {
   let alive = false;
   for (let i = 0; i < 8; i++) {
-    if (http.get(`${BASE}/health`, HDR).status === 200) {
+    if (get(`/health`).status === 200) {
       alive = true;
       break;
     }
@@ -191,8 +214,8 @@ export function setup() {
 
   const players = [];
   for (let i = 0; i < N_PLAYERS; i++) {
-    const d = j(post("/start-game", { nickname: `L${String(i + 1).padStart(3, "0")}`, gameId: admin.gameId }));
-    if (d.playerId) players.push({ playerId: d.playerId });
+    const d = j(post("/start-game", { nickname: botName(i, 3), gameId: admin.gameId }));
+    if (d.playerId) players.push({ playerId: d.playerId, persona: personaFor(i) });
   }
   if (players.length < N_PLAYERS) throw new Error(`setup: only ${players.length}/${N_PLAYERS} players joined`);
 
@@ -219,7 +242,8 @@ export function driveGame(data) {
     adminToken: data.adminToken,
     adminPlayerId: data.adminPlayerId,
     configuredHands: data.configuredHands,
-    roundsThisGame: 0
+    roundsThisGame: 0,
+    truckOn: true // setup opens the express truck
   };
 
   // ── Phase 1: play a few warm-up rounds before the restart ──
@@ -229,15 +253,17 @@ export function driveGame(data) {
   }
 
   // ── Restart: mints a new gameId (same adminToken + roster), resets to round 1. ──
-  const rg = j(
+  const rg = RESTART_AT_ROUND <= 0 ? null : j(
     post("/restart-game", {
       gameId: state.gameId,
       adminToken: state.adminToken,
       playerId: state.adminPlayerId
     })
   );
-  check(rg, { "restart-game ok": (x) => Boolean(x.gameId) });
-  if (!rg.gameId) {
+  if (rg) check(rg, { "restart-game ok": (x) => Boolean(x.gameId) });
+  if (!rg) {
+    // No restart requested: the game below is the first and only instance.
+  } else if (!rg.gameId) {
     gameErrors.add(1);
   } else {
     state.gameId = rg.gameId;
@@ -255,7 +281,7 @@ export function driveGame(data) {
     if (r < N_ROUNDS) sleep(REVIEW_GAP);
   }
 
-  const lb = j(http.get(`${BASE}/leaderboard?gameId=${state.gameId}`, HDR));
+  const lb = j(get(`/leaderboard?gameId=${state.gameId}`));
   const top = (lb.leaderboard || [])[0];
   console.log(`Final leaderboard: ${(lb.leaderboard || []).length} players | leader=${top?.nickname} $${top?.cumulativeProfit}`);
 }
@@ -275,13 +301,13 @@ export function playerLoop(data) {
   // server answers 400; rediscover the active game via /health and retry with our same
   // playerId — mirroring the real client swapping ids on a `game_restarted` event.
   const t0 = Date.now();
-  let res = http.get(`${BASE}/game-state?gameId=${currentGameId}&playerId=${player.playerId}`, HDR);
+  let res = get(`/game-state?gameId=${currentGameId}&playerId=${player.playerId}`);
   if (res.status === 400) {
-    const h = j(http.get(`${BASE}/health`, HDR));
+    const h = j(get(`/health`));
     if (h.activeGameId && h.activeGameId !== currentGameId) {
       currentGameId = h.activeGameId;
       restartsFollowed.add(1);
-      res = http.get(`${BASE}/game-state?gameId=${currentGameId}&playerId=${player.playerId}`, HDR);
+      res = get(`/game-state?gameId=${currentGameId}&playerId=${player.playerId}`);
     }
   }
   pollLatency.add(Date.now() - t0);
@@ -296,9 +322,8 @@ export function playerLoop(data) {
 
   if (gs.roundPhase === "active" && gs.player && !gs.player.submittedThisRound) {
     sleep(Math.random() * 3); // brief human reaction delay before ordering
-    const qty = chooseOrder(gs.distribution);
-    // ~30% also split a little onto the express truck (same-round arrival).
-    const expressQty = Math.random() < 0.3 ? Math.floor(Math.random() * 30) + 10 : 0;
+    // Order-up-to persona decision from this player's own state (lib/bots.js).
+    const { orderQty: qty, expressQty } = decideOrder(player.persona, gs);
 
     const s0 = Date.now();
     const r = post("/submit-order", { gameId: currentGameId, playerId: player.playerId, orderQty: qty, expressQty });
@@ -319,9 +344,9 @@ export function playerLoop(data) {
 
   // Light extra activity — active users browse the leaderboard often, others rarely.
   const roll = Math.random();
-  if (isActiveUser && roll < 0.5) http.get(`${BASE}/leaderboard?gameId=${currentGameId}`, HDR);
-  else if (roll < 0.08) http.get(`${BASE}/leaderboard?gameId=${currentGameId}`, HDR);
-  else if (roll < 0.1) http.get(`${BASE}/health`, HDR);
+  if (isActiveUser && roll < 0.5) get(`/leaderboard?gameId=${currentGameId}`);
+  else if (roll < 0.08) get(`/leaderboard?gameId=${currentGameId}`);
+  else if (roll < 0.1) get(`/health`);
 
   // Relaxed cadence: the real client is WebSocket-push driven (150s HTTP fallback),
   // so model occasional human-driven refreshes instead of 1s polling.
@@ -332,7 +357,7 @@ export function playerLoop(data) {
 // ── Teardown: close a round if the driver left one open (safety) ─────────────
 export function teardown(data) {
   // The active game id may have changed via restart — resolve it before ending.
-  const h = j(http.get(`${BASE}/health`, HDR));
+  const h = j(get(`/health`));
   const gameId = h.activeGameId || data.gameId;
   post("/end-round", { gameId, adminToken: data.adminToken });
 }

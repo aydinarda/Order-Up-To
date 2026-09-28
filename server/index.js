@@ -31,13 +31,31 @@ const DEFAULT_ADMIN_KEY = process.env.ADMIN_KEY || "admin123";
 // Leaderboard = Pareto representation over the two KPIs the admin picked
 // (config.paretoX / paretoY, default CO2 vs profit): rows are annotated with a
 // non-dominated front number for that pair only and sorted (front asc, then
-// best Y). Every row still carries all four KPIs, so the end-of-game report
+// the pair's higher-priority KPI). Every row still carries all four KPIs, so the end-of-game report
 // can re-rank any other pair in the browser. The same rows feed the scatter.
 function rankLeaderboard(rows, config) {
   return computeParetoFronts(rows, paretoAxesFromConfig(config)).map((row, index) => ({
     ...row,
     rank: index + 1
   }));
+}
+
+// A player who joins after the last round has no results: N/A (null) KPIs.
+// The ranking treats a missing value as the worst possible, so they land on the
+// last front without displacing anyone, and the chart leaves them off.
+function noResultsRow(player) {
+  return {
+    nickname: player.nickname,
+    cumulativeProfit: null,
+    cumProfit: null,
+    cumCo2: null,
+    cumBackorders: null,
+    cumVehicles: 0,
+    serviceLevelPct: null,
+    fleetFillPct: null,
+    leftover: 0,
+    roundsPlayed: 0
+  };
 }
 
 function calculateLeaderboard(players, config) {
@@ -340,7 +358,14 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       joinedAt
     });
 
-    if (activeGame.roundPhase === "pending") {
+    if (getRoundForGame(activeGame) === null) {
+      // The game is over and every history was archived, so rebuilding from
+      // them would zero the final standings. Keep them; add the latecomer as N/A.
+      activeGame.leaderboard = rankLeaderboard(
+        [...activeGame.leaderboard, noResultsRow(player)],
+        activeGame.config
+      );
+    } else if (activeGame.roundPhase === "pending") {
       activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
     }
 

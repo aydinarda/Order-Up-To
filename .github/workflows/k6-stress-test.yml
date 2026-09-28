@@ -126,7 +126,7 @@ jobs:
           print("\n" + "-" * 60)
           print("  Latencies (avg / p95 / max, ms)")
           print("-" * 60)
-          for n in ["http_req_duration", "poll_latency", "submit_latency", "join_latency", "end_round_latency"]:
+          for n in ["http_req_duration", "poll_latency", "submit_latency", "join_latency", "end_round_latency", "rerank_latency"]:
               print(f"  {n:<18} avg={stat(n,'avg')}  p95={stat(n,'p(95)')}  max={stat(n,'max')}")
 
           print("\n" + "-" * 60)
@@ -137,10 +137,12 @@ jobs:
           print(f"  game_errors(5xx)  {stat('game_errors','count')}")
           print(f"  churn_joins       {stat('churn_joins','count')}")
           print(f"  submit_rate_limited {stat('submit_rate_limited','count')}")
+          print(f"  pareto_switches   {stat('pareto_switches','count')}")
+          print(f"  stock_adds        {stat('stock_adds','count')}")
           print(f"  peak VUs          {stat('vus_max','value')}")
           print("-" * 60)
           print("\nNote: this test ramps load until the server degrades; FAIL thresholds")
-          print("and rising end_round_latency/poll_latency show where the limit is.")
+          print("and rising end_round_latency/poll_latency/rerank_latency show where the limit is.")
           EOF
 
       - name: Upload k6 results

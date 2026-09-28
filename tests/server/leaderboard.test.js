@@ -288,3 +288,37 @@ test("the Pareto pair can change mid-round; economy fields still cannot", async 
   assert.equal(state.body.config.paretoX, "backorders");
   assert.equal(state.body.config.price, 40);
 });
+
+test("joining after the game ended keeps the final standings; the latecomer is N/A on the last front", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, alice } = await setupDeterministicGame(app);
+  const bob = await join(app, gameId, "Bob");
+
+  await playRound(app, gameId, adminToken, { [alice]: 100, [bob]: 200 });
+  const end = await playRound(app, gameId, adminToken, { [alice]: 0, [bob]: 0 }); // game over
+  assert.equal(end.body.finished, true);
+  const before = await request(app).get("/leaderboard").query({ gameId });
+
+  const late = await request(app).post("/start-game").send({ nickname: "LateComer", gameId });
+  assert.equal(late.status, 200); // joining stays allowed
+
+  const after = await request(app).get("/leaderboard").query({ gameId });
+  // Everyone who played keeps their final result, rank and front.
+  assert.deepEqual(rows(after).slice(0, 2), rows(before));
+  // The latecomer is listed last, with no results.
+  const lateRow = after.body.leaderboard[2];
+  assert.equal(lateRow.nickname, "LateComer");
+  assert.equal(lateRow.rank, 3);
+  assert.ok(lateRow.front > before.body.leaderboard[1].front);
+  assert.equal(lateRow.cumProfit, null);
+  assert.equal(lateRow.cumCo2, null);
+  assert.equal(lateRow.cumBackorders, null);
+  assert.equal(lateRow.serviceLevelPct, null);
+  assert.equal(lateRow.roundsPlayed, 0);
+
+  // Re-ranking on another pair afterwards still keeps everyone's results.
+  await request(app).post("/set-config").send({ gameId, adminToken, paretoX: "backorders", paretoY: "profit" });
+  const reranked = await request(app).get("/leaderboard").query({ gameId });
+  assert.equal(reranked.body.leaderboard.find((r) => r.nickname === "Alice").cumulativeProfit, 2950);
+  assert.equal(reranked.body.leaderboard.at(-1).nickname, "LateComer");
+});

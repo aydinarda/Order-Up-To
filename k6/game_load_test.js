@@ -9,6 +9,10 @@
  *   2. concurrent_submit – 100 VUs place an order at the same time
  *   3. health_storm      – 100 VUs poll /health for 15s
  *   4. spike_join        – 50 fresh VUs try to join the game simultaneously
+ *   5. admin_ops         – during poll_storm the admin keeps re-ranking the
+ *                          leaderboard on other Pareto pairs mid-round
+ *                          (rerank_latency); setup also adds stock to every
+ *                          warehouse before the priming round
  *
  * Thresholds (realistic for Render free tier):
  *   - submit p(95) < 8000 ms
@@ -21,10 +25,11 @@ import http             from 'k6/http';
 import { check, sleep } from 'k6';
 import { Trend, Counter } from 'k6/metrics';
 import { scenario }     from 'k6/execution';
+import {
+  ADMIN_KEY, BASE, HDR, PARETO_PAIRS, addStock, j, post, setPareto,
+} from './lib/bots.js';
 
-const BASE      = (__ENV.BASE_URL  || 'https://simplenewsvendorgame.onrender.com').replace(/\/$/, '');
-const ADMIN_KEY = __ENV.ADMIN_KEY  || 'admin123';
-const HDR       = { headers: { 'Content-Type': 'application/json' } };
+const STOCK_ADD = 100; // units added to every warehouse before the priming round
 
 // ── Custom metrics ────────────────────────────────────────────────────────────
 const submitLatency = new Trend('submit_latency', true);
@@ -69,6 +74,17 @@ export const options = {
       tags:      { scenario: 'health_storm' },
     },
 
+    // 5. Admin re-ranks the leaderboard on other Pareto pairs mid-round, while
+    //    100 players poll (the pair may change during an active round).
+    admin_ops: {
+      executor:  'constant-vus',
+      vus:       1,
+      duration:  '30s',
+      startTime: '5s',
+      exec:      'adminOps',
+      tags:      { scenario: 'admin_ops' },
+    },
+
     // 4. 50 fresh VUs → /start-game (simultaneous join wave)
     spike_join: {
       executor:    'shared-iterations',
@@ -86,6 +102,7 @@ export const options = {
     'submit_latency': ['p(95)<8000'],
     'poll_latency':   ['p(95)<5000'],
     'join_latency':   ['p(95)<8000'],
+    'rerank_latency': ['p(95)<3000'],
     // 5xx error counter — spike_join/submit 4xx responses do not count here.
     'game_errors':    ['count<20'],
     // health_storm must be 100% healthy; 4xx in other scenarios is expected.
@@ -94,15 +111,6 @@ export const options = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function post(path, body) {
-  return http.post(`${BASE}${path}`, JSON.stringify(body), HDR);
-}
-
-function j(res) {
-  try   { return JSON.parse(res.body) || {}; }
-  catch { return {}; }
-}
-
 function gameStateUrl(gameId, playerId, adminToken) {
   let url = `${BASE}/game-state?gameId=${gameId}&playerId=${playerId}`;
   if (adminToken) url += `&adminToken=${adminToken}`;
@@ -154,6 +162,9 @@ export function setup() {
   if (players.length < N_PLAYERS) {
     throw new Error(`setup: ${players.length}/${N_PLAYERS} players joined`);
   }
+
+  // Everyone opens with stock the admin added; it lands in the priming round.
+  addStock(gameId, adminToken, STOCK_ADD);
 
   // Play the priming round to completion (round 1 realizes no demand). Missing
   // submissions default to 0, so we can end it immediately.
@@ -219,6 +230,14 @@ export function concurrentSubmit(data) {
   if (r.status >= 500) gameErrors.add(1);
 }
 
+// ── Scenario 5: admin_ops ─────────────────────────────────────────────────────
+// Cycle the leaderboard's Pareto pair while 100 players poll the active round.
+export function adminOps(data) {
+  const [x, y] = PARETO_PAIRS[scenario.iterationInTest % PARETO_PAIRS.length];
+  setPareto(data.gameId, data.adminToken, x, y);
+  sleep(1);
+}
+
 // ── Scenario 3: health_storm ──────────────────────────────────────────────────
 export function healthStorm(_data) {
   const r  = http.get(`${BASE}/health`, HDR);
@@ -277,11 +296,22 @@ export function teardown(data) {
       typeof history[history.length - 1]?.realizedDemand === 'number',
   });
 
-  // Verify the leaderboard.
+  // The stock added in setup landed in the priming round. The game is over
+  // after round 2, so the rounds were archived into the turn history.
+  const archived = (gsd.player?.turHistory || []).slice(-1)[0]?.rounds || gsd.player?.history || [];
+  check(gsd, {
+    'teardown: added stock landed in round 1': () => archived[0]?.addedQty === STOCK_ADD,
+  });
+
+  // Verify the leaderboard: Pareto front + all four KPIs on every row.
   const lbR = http.get(`${BASE}/leaderboard?gameId=${data.gameId}`, HDR);
   const lbd = j(lbR);
+  const rows = lbd.leaderboard || [];
   check(lbd, {
     'teardown: leaderboard endpoint works': () => lbR.status === 200,
-    'teardown: leaderboard populated':      () => (lbd.leaderboard || []).length > 0,
+    'teardown: leaderboard populated':      () => rows.length > 0,
+    'teardown: rows carry front + KPIs':    () =>
+      rows.every((r) => r.front >= 1 && 'cumProfit' in r && 'cumCo2' in r &&
+        'serviceLevelPct' in r && 'cumBackorders' in r),
   });
 }
