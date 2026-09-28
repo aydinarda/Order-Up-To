@@ -5,7 +5,8 @@
 // position (on-hand + in-transit) is surfaced for context but is NOT used to
 // derive q — reading the pipeline and not over-ordering is the player's job.
 //
-// The warehouse starts EMPTY (no starting stock). Round 1 is a priming round:
+// The warehouse starts EMPTY (no starting stock — the admin can add some before
+// round 1, see "Admin-added stock" below). Round 1 is a priming round:
 // no demand / no sales — the player just places an opening order, and that
 // opening order arrives fast (lead time 1, i.e. at the start of round 2).
 // Every later order uses the configured lead time L, which the admin may raise
@@ -60,6 +61,13 @@
 // during a shipping-delay event, which freezes only the ship pipeline. That
 // guaranteed immediacy is exactly what its premium buys.
 //
+// Admin-added stock: between rounds the admin can add units to every player's
+// stock (e.g. before round 1, to give everyone the same opening stock). They
+// are free (no purchase cost, no vehicle) and land at the start of the next
+// round alongside the deliveries — immune to delay events, and like any
+// arrival they clear open backorders first, so revenue is still booked on
+// delivery.
+//
 // The admin can switch the express truck off (config.expressEnabled). That rule
 // is enforced by the server, not here: this engine prices whatever it is given,
 // so the analysis scripts can compare both legs regardless of the toggle.
@@ -101,6 +109,8 @@ export function createInitialState(config = DEFAULT_CONFIG) {
 //   expressQty — units additionally shipped by express truck this round
 //                (default 0). Both vehicles can be used in the same round:
 //                `order` rides the ship, `expressQty` rides the express truck.
+//   addedQty — units the admin added to the stock since the last round
+//              (default 0): free, and landing this round even when delayed.
 //   priming — round 1: no demand is realized, no sales, no backorders
 //   delayed — a shared shipping-delay event hit this round: nothing arrives
 //             from the pipeline, nothing already in it advances, and this
@@ -119,13 +129,16 @@ export function advancePeriod(state, config, demand, order, options = {}) {
   // event freezes only the ship pipeline, never the direct truck.
   const pipelineArrival = delayed ? 0 : state.pipeline[0] ?? 0;
   const arrival = pipelineArrival + expressQty;
+  // Admin-added units land alongside the deliveries (but are not a shipment).
+  const addedQty = Math.max(0, options.addedQty ?? 0);
+  const inflow = arrival + addedQty;
 
   // Arrivals first clear the backlog carried in from earlier rounds; whatever
   // net stock remains serves this round's demand, and the shortfall is
   // backordered (net inventory goes negative).
   const backlogStart = Math.max(0, -state.onHand);
-  const net = state.onHand + arrival;
-  const backlogFilled = Math.min(backlogStart, arrival);
+  const net = state.onHand + inflow;
+  const backlogFilled = Math.min(backlogStart, inflow);
   const roundDemand = priming ? 0 : demand;
   const servedOnTime = Math.min(roundDemand, Math.max(0, net));
   const newBackorders = roundDemand - servedOnTime;
@@ -187,6 +200,7 @@ export function advancePeriod(state, config, demand, order, options = {}) {
       delayed,
       mode,
       arrival,
+      addedQty,
       demand: priming ? null : demand,
       sold,
       servedOnTime,

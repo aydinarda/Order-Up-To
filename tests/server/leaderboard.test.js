@@ -194,3 +194,97 @@ test("under-ordering builds a backlog: fill rate, cumulative backorders and pena
   assert.equal(row.cumBackorders, 150);
   assert.equal(row.serviceLevelPct, 25); // 50 of 200 units served on time
 });
+
+// ── Admin-chosen Pareto pair ────────────────────────────────────────────────
+test("the admin's Pareto pair re-ranks the standings, even after the game has finished", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, alice } = await setupDeterministicGame(app);
+  await join(app, gameId, "Idle");
+
+  // Alice: profit 2950, CO2 100, 0 backorders. Idle: profit -500, CO2 0, 100 backorders.
+  await playRound(app, gameId, adminToken, { [alice]: 100 });
+  await playRound(app, gameId, adminToken, { [alice]: 0 }); // game over
+
+  // Default CO2 vs profit: Idle's zero CO2 keeps it on front 1.
+  let res = await request(app).get("/leaderboard").query({ gameId });
+  assert.deepEqual(rows(res), [
+    [1, 1, "Alice", 2950],
+    [2, 1, "Idle", -500]
+  ]);
+
+  // Backorders vs profit: Alice is better on both, so Idle drops to front 2.
+  const set = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, paretoX: "backorders", paretoY: "profit" });
+  assert.equal(set.status, 200);
+  assert.equal(set.body.config.paretoX, "backorders");
+
+  res = await request(app).get("/leaderboard").query({ gameId });
+  assert.deepEqual(rows(res), [
+    [1, 1, "Alice", 2950],
+    [2, 2, "Idle", -500]
+  ]);
+  // Re-ranking keeps every KPI (the finished game's histories are archived).
+  const idleRow = res.body.leaderboard.find((r) => r.nickname === "Idle");
+  assert.equal(idleRow.cumBackorders, 100);
+  assert.equal(idleRow.cumCo2, 0);
+});
+
+test("a game can start with a chosen Pareto pair; defaults to CO2 vs profit", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const plain = await request(app).post("/start-game").send({ nickname: "A", adminKey: ADMIN_KEY });
+  assert.equal(plain.body.config.paretoX, "co2");
+  assert.equal(plain.body.config.paretoY, "profit");
+
+  const custom = await request(app)
+    .post("/start-game")
+    .send({ nickname: "B", adminKey: ADMIN_KEY, config: { paretoX: "backorders", paretoY: "serviceLevel" } });
+  assert.equal(custom.status, 200);
+  assert.equal(custom.body.config.paretoX, "backorders");
+  assert.equal(custom.body.config.paretoY, "serviceLevel");
+});
+
+test("set-config rejects an unknown KPI or the same KPI on both Pareto axes", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken } = await setupDeterministicGame(app);
+
+  const unknown = await request(app).post("/set-config").send({ gameId, adminToken, paretoX: "happiness" });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.body.error, /paretoX must be one of/);
+
+  const same = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, paretoX: "profit", paretoY: "profit" });
+  assert.equal(same.status, 400);
+
+  // Also caught when only one side changes and it collides with the other (Y = profit).
+  const collides = await request(app).post("/set-config").send({ gameId, adminToken, paretoX: "profit" });
+  assert.equal(collides.status, 400);
+  assert.match(collides.body.error, /must be different/);
+
+  const state = await request(app).get("/game-state").query({ gameId });
+  assert.equal(state.body.config.paretoX, "co2"); // nothing was applied
+});
+
+test("the Pareto pair can change mid-round; economy fields still cannot", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken } = await setupDeterministicGame(app, { handsPerTur: 3 });
+  await request(app).post("/start-round").send({ gameId, adminToken });
+
+  const axes = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, paretoX: "backorders", paretoY: "serviceLevel" });
+  assert.equal(axes.status, 200);
+  assert.equal(axes.body.config.paretoY, "serviceLevel");
+
+  // Bundling an economy field with the pair is still refused mid-round.
+  const mixed = await request(app)
+    .post("/set-config")
+    .send({ gameId, adminToken, paretoX: "co2", price: 50 });
+  assert.equal(mixed.status, 400);
+  assert.match(mixed.body.error, /active round/i);
+
+  const state = await request(app).get("/game-state").query({ gameId });
+  assert.equal(state.body.config.paretoX, "backorders");
+  assert.equal(state.body.config.price, 40);
+});

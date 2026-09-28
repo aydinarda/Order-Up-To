@@ -514,3 +514,133 @@ test("announce requires a valid admin token", async () => {
   const res = await request(app).post("/announce").send({ gameId, adminToken: "nope", message: "hi" });
   assert.equal(res.status, 403);
 });
+
+// ── Admin adds units to every player's stock ────────────────────────────────
+test("add-stock adds on top of every player's stock at the start of the next round", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app, { handsPerTur: 4 });
+  const joined = await request(app).post("/start-game").send({ nickname: "student", gameId });
+  const studentId = joined.body.playerId;
+
+  // Two adds before round 1 accumulate; the count is visible to everyone.
+  const first = await request(app).post("/add-stock").send({ gameId, adminToken, qty: 60 });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.pendingStockAdded, 60);
+  assert.equal(first.body.roundId, 1);
+  const second = await request(app).post("/add-stock").send({ gameId, adminToken, qty: 40 });
+  assert.equal(second.body.pendingStockAdded, 100);
+  let gs = await request(app).get("/game-state").query({ gameId, playerId: studentId });
+  assert.equal(gs.body.pendingStockAdded, 100);
+
+  // Round 1 (priming): the student opens 30 by ship, the admin orders nothing.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId: studentId, orderQty: 30 });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  gs = await request(app).get("/game-state").query({ gameId, playerId: studentId });
+  assert.equal(gs.body.pendingStockAdded, 0); // consumed by the round
+  assert.equal(gs.body.player.inventory.onHand, 100);
+  assert.equal(gs.body.player.lastRoundResult.addedQty, 100);
+  assert.equal(gs.body.player.lastRoundResult.purchaseCost, 30 * 10); // only the ship order is paid
+
+  const admin = await request(app).get("/game-state").query({ gameId, playerId });
+  assert.equal(admin.body.player.inventory.onHand, 100);
+
+  // Mid-game: added on top of each player's own stock — it never levels them.
+  await request(app).post("/add-stock").send({ gameId, adminToken, qty: 10 });
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+  const studentHistory = (await request(app).get("/game-state").query({ gameId, playerId: studentId })).body
+    .player.history;
+  const adminHistory = (await request(app).get("/game-state").query({ gameId, playerId })).body.player.history;
+  const demand = studentHistory[1].demand;
+  // Student: 100 + 30 (opening order) + 10 added − demand; admin: 100 + 10 − demand.
+  assert.equal(studentHistory[1].onHandEnd, 140 - demand);
+  assert.equal(adminHistory[1].onHandEnd, 110 - demand);
+});
+
+test("players who join after stock was added still get it, until it has landed", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken } = await createGame(app, { handsPerTur: 3 });
+
+  await request(app).post("/add-stock").send({ gameId, adminToken, qty: 80 });
+
+  // Joins after the add, before round 1 starts: sees the pending units at once.
+  const early = await request(app).post("/start-game").send({ nickname: "early", gameId });
+  assert.equal(early.body.pendingStockAdded, 80);
+
+  // Joins while round 1 is already running.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  const midRound = await request(app).post("/start-game").send({ nickname: "midround", gameId });
+  assert.equal(midRound.body.pendingStockAdded, 80);
+
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  for (const { playerId } of [early.body, midRound.body]) {
+    const gs = await request(app).get("/game-state").query({ gameId, playerId });
+    assert.equal(gs.body.player.inventory.onHand, 80);
+    assert.equal(gs.body.player.lastRoundResult.addedQty, 80);
+  }
+
+  // Joins after the round that delivered it: the stock has landed, so they start empty.
+  const late = await request(app).post("/start-game").send({ nickname: "late", gameId });
+  assert.equal(late.body.pendingStockAdded, 0);
+  assert.equal(late.body.inventory.onHand, 0);
+});
+
+test("a late joiner sells from stock added before they joined", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken } = await createGame(app, { handsPerTur: 3 });
+
+  // Round 1 (priming) is played before the newcomer exists.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  await request(app).post("/add-stock").send({ gameId, adminToken, qty: 150 });
+  const newcomer = await request(app).post("/start-game").send({ nickname: "newcomer", gameId });
+  const { playerId } = newcomer.body;
+
+  // Round 2 has demand; the newcomer orders nothing and relies on the added stock.
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0 });
+  await request(app).post("/end-round").send({ gameId, adminToken });
+
+  const result = (await request(app).get("/game-state").query({ gameId, playerId })).body.player
+    .lastRoundResult;
+  assert.equal(result.addedQty, 150);
+  assert.equal(result.servedOnTime, Math.min(result.demand, 150));
+  assert.ok(result.sold > 0);
+  assert.equal(result.revenue, result.sold * 40); // default price
+  assert.equal(result.purchaseCost, 0);
+});
+
+test("add-stock is admin-only, between rounds, and takes a positive integer", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken } = await createGame(app);
+
+  const noAuth = await request(app).post("/add-stock").send({ gameId, adminToken: "nope", qty: 10 });
+  assert.equal(noAuth.status, 403);
+
+  for (const qty of [0, -5, 2.5, "abc", undefined]) {
+    const bad = await request(app).post("/add-stock").send({ gameId, adminToken, qty });
+    assert.equal(bad.status, 400, `qty ${qty} should be rejected`);
+  }
+
+  await request(app).post("/start-round").send({ gameId, adminToken });
+  const during = await request(app).post("/add-stock").send({ gameId, adminToken, qty: 10 });
+  assert.equal(during.status, 400);
+  assert.match(during.body.error, /active round/i);
+});
+
+test("restart drops stock that was added but has not landed yet", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app);
+
+  await request(app).post("/add-stock").send({ gameId, adminToken, qty: 50 });
+  const restarted = await request(app).post("/restart-game").send({ gameId, adminToken, playerId });
+
+  const gs = await request(app).get("/game-state").query({ gameId: restarted.body.gameId, playerId });
+  assert.equal(gs.body.pendingStockAdded, 0);
+  assert.equal(gs.body.player.inventory.onHand, 0);
+});

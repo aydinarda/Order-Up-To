@@ -739,6 +739,43 @@ button.danger:hover {
   margin-top: 6px;
 }
 
+/* Pick the pair of KPIs on top of the Pareto chart (admin in game, everyone
+   in the end-of-game report). */
+.pareto-axes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.pareto-axes label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.pareto-axes-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.pareto-axes select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--text);
+  background: #fff;
+}
+
+.leaderboard-caption {
+  margin: 0 0 8px;
+}
+
 .pipeline-viz {
   margin: 12px 0;
 }
@@ -820,6 +857,49 @@ button.danger:hover {
   padding: 8px;
   font-size: 0.95rem;
   background: #fff;
+}
+
+/* Set Parameters + a reminder that edits only apply once it is clicked. */
+.set-params-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.set-params-hint {
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--hazelnut);
+}
+
+/* Unsaved edits in the form: make the reminder hard to miss. */
+.set-params-hint.is-dirty {
+  font-weight: 700;
+  color: var(--danger);
+}
+
+/* "+ Add units to stock": a number box with the button beside it. */
+.add-stock-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.add-stock-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.add-stock-row input {
+  max-width: 140px;
+}
+
+.add-stock-pending {
+  margin: 0;
+  font-size: 0.85rem;
 }
 
 /* Fast-truck on/off switch: its own full-width row, above the truck fields it

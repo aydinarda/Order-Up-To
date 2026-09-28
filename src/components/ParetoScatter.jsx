@@ -1,8 +1,11 @@
-// Profit-vs-CO2 Pareto scatter — the debrief centerpiece. One dot per player;
-// x = cumulative CO2 (minimize), y = cumulative profit (maximize). Dot color is
-// an ordinal single-hue ramp over the player's Pareto front (validated against
-// the app surface); the front-1 frontier is connected by a step line. The
-// player's own dot gets an accent ring. Identity is never color-alone: dots are
+import { DEFAULT_PARETO_AXES, PARETO_METRICS } from "../../server/utils/pareto.js";
+
+// Pareto scatter — the debrief centerpiece. One dot per player over the two
+// KPIs in `axes` (default x = cumulative CO2, y = cumulative profit); rows must
+// already carry their `front` for that pair. Dot color is an ordinal
+// single-hue ramp over the player's Pareto front (validated against the app
+// surface); the front-1 frontier is connected by a step line. The player's own
+// dot gets an accent ring. Identity is never color-alone: dots are
 // direct-labeled and the leaderboard table sits next to the chart.
 
 // Ordinal single-hue orchard-green ramp over Pareto fronts; the self-dot ring is
@@ -43,17 +46,43 @@ function formatTick(value) {
   return String(Math.round(value * 10) / 10);
 }
 
-function ParetoScatter({ rows, selfNickname }) {
+function formatValue(metric, value) {
+  const rounded = Math.round(value);
+  if (metric.unit === "$") return `$${rounded.toLocaleString("en-US")}`;
+  if (metric.unit === "%") return `${rounded}%`;
+  return `${rounded.toLocaleString("en-US")} ${metric.unit}`;
+}
+
+// "Up-left" etc.: where the better players sit on this pair.
+function goodDirection(xMetric, yMetric) {
+  const vertical = yMetric.goal === "max" ? "Up" : "Down";
+  const horizontal = xMetric.goal === "max" ? "right" : "left";
+  return `${vertical}-${horizontal}`;
+}
+
+function ParetoScatter({ rows, selfNickname, axes = DEFAULT_PARETO_AXES, controls = null }) {
+  const xMetric = PARETO_METRICS[axes.x];
+  const yMetric = PARETO_METRICS[axes.y];
+  const title = `${yMetric.label} vs ${xMetric.label}`;
+  const xOf = (row) => row[xMetric.key];
+  const yOf = (row) => row[yMetric.key];
+
+  // Service level stays empty until a round with demand has been played.
   const playable = (rows || []).filter(
-    (row) => Number.isFinite(row.cumCo2) && Number.isFinite(row.cumProfit)
+    (row) => Number.isFinite(xOf(row)) && Number.isFinite(yOf(row))
   );
 
   if (playable.length < 2) {
     return (
       <section className="card pareto-card">
-        <h3>Profit vs CO₂</h3>
+        <h3>{title}</h3>
+        {controls}
         <p className="muted-text">
-          The Pareto chart appears once at least two players have results.
+          The Pareto chart appears once at least two players have results
+          {axes.x === "serviceLevel" || axes.y === "serviceLevel"
+            ? " (service level starts after the first round with demand)"
+            : ""}
+          .
         </p>
       </section>
     );
@@ -65,16 +94,15 @@ function ParetoScatter({ rows, selfNickname }) {
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
 
-  const co2Values = playable.map((r) => r.cumCo2);
-  const profitValues = playable.map((r) => r.cumProfit);
-  const pad = (max, min) => (max === min ? Math.abs(max) * 0.1 + 1 : (max - min) * 0.1);
-
-  const xPad = pad(Math.max(...co2Values), Math.min(...co2Values));
-  const yPad = pad(Math.max(...profitValues), Math.min(...profitValues));
-  const xMin = Math.max(0, Math.min(...co2Values) - xPad);
-  const xMax = Math.max(...co2Values) + xPad;
-  const yMin = Math.min(...profitValues) - yPad;
-  const yMax = Math.max(...profitValues) + yPad;
+  // Padded data range, kept inside the KPI's natural bounds (e.g. 0–100%).
+  const axisRange = (values, metric) => {
+    const lo = Math.min(...values);
+    const hi = Math.max(...values);
+    const pad = hi === lo ? Math.abs(hi) * 0.1 + 1 : (hi - lo) * 0.1;
+    return [Math.max(metric.min ?? -Infinity, lo - pad), Math.min(metric.max ?? Infinity, hi + pad)];
+  };
+  const [xMin, xMax] = axisRange(playable.map(xOf), xMetric);
+  const [yMin, yMax] = axisRange(playable.map(yOf), yMetric);
 
   const x = (v) => margin.left + ((v - xMin) / (xMax - xMin)) * plotW;
   const y = (v) => margin.top + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
@@ -82,19 +110,20 @@ function ParetoScatter({ rows, selfNickname }) {
   const xTicks = makeTicks(xMin, xMax);
   const yTicks = makeTicks(yMin, yMax);
 
-  // Frontier step line through front-1 dots: sorted by CO2, stepping so the
-  // line only moves right (more CO2) and up (more profit).
-  const frontier = playable
-    .filter((row) => row.front === 1)
-    .sort((a, b) => a.cumCo2 - b.cumCo2);
+  // Frontier step line through front-1 dots, sorted left to right. It steps
+  // through the corner both neighbours dominate: when lower X is better the
+  // next dot is worse on X, so go across first; when higher X is better, go
+  // up/down first.
+  const frontier = playable.filter((row) => row.front === 1).sort((a, b) => xOf(a) - xOf(b));
+  const acrossFirst = xMetric.goal === "min";
   let frontierPath = "";
   frontier.forEach((row, i) => {
-    const px = x(row.cumCo2);
-    const py = y(row.cumProfit);
+    const px = x(xOf(row));
+    const py = y(yOf(row));
     if (i === 0) {
       frontierPath = `M ${px} ${py}`;
     } else {
-      frontierPath += ` H ${px} V ${py}`;
+      frontierPath += acrossFirst ? ` H ${px} V ${py}` : ` V ${py} H ${px}`;
     }
   });
 
@@ -104,11 +133,12 @@ function ParetoScatter({ rows, selfNickname }) {
 
   return (
     <section className="card pareto-card">
-      <h3>Profit vs CO₂ — Pareto fronts</h3>
+      <h3>{title} — Pareto fronts</h3>
+      {controls}
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="Scatter chart of cumulative profit versus cumulative CO2 per player, colored by Pareto front"
+        aria-label={`Scatter chart of ${yMetric.label.toLowerCase()} versus ${xMetric.label.toLowerCase()} per player, colored by Pareto front`}
         style={{ width: "100%", height: "auto" }}
       >
         {/* grid */}
@@ -183,7 +213,7 @@ function ParetoScatter({ rows, selfNickname }) {
           fontSize="12"
           fill={LABEL}
         >
-          Cumulative CO₂ (kg) →
+          {xMetric.label} ({xMetric.unit}) →
         </text>
         <text
           x={16}
@@ -193,7 +223,7 @@ function ParetoScatter({ rows, selfNickname }) {
           fill={LABEL}
           transform={`rotate(-90 16 ${margin.top + plotH / 2})`}
         >
-          Cumulative profit ($) →
+          {yMetric.label} ({yMetric.unit}) →
         </text>
 
         {/* front-1 frontier step line */}
@@ -204,8 +234,11 @@ function ParetoScatter({ rows, selfNickname }) {
         {/* dots */}
         {playable.map((row) => {
           const isSelf = selfNickname && row.nickname === selfNickname;
-          const cx = x(row.cumCo2);
-          const cy = y(row.cumProfit);
+          const cx = x(xOf(row));
+          const cy = y(yOf(row));
+          // Dots in the right quarter label to their left so names never run
+          // off the chart edge.
+          const labelLeft = cx > margin.left + plotW * 0.75;
           return (
             <g key={row.nickname} data-testid="pareto-dot">
               {isSelf && (
@@ -220,13 +253,14 @@ function ParetoScatter({ rows, selfNickname }) {
                 strokeWidth="2"
               >
                 <title>
-                  {`${row.nickname} — front ${row.front}, profit $${Math.round(row.cumProfit)}, CO₂ ${Math.round(row.cumCo2)} kg`}
+                  {`${row.nickname} — front ${row.front}, ${yMetric.label} ${formatValue(yMetric, yOf(row))}, ${xMetric.label} ${formatValue(xMetric, xOf(row))}`}
                 </title>
               </circle>
               {(labelAll || row.front === 1 || isSelf) && (
                 <text
-                  x={cx + 11}
+                  x={labelLeft ? cx - 11 : cx + 11}
                   y={cy - 8}
+                  textAnchor={labelLeft ? "end" : "start"}
                   fontSize="11"
                   fontWeight={isSelf ? "700" : "400"}
                   fill={LABEL}
@@ -250,8 +284,8 @@ function ParetoScatter({ rows, selfNickname }) {
         ))}
       </div>
       <p className="muted-text pareto-hint">
-        Up-left is the good direction: more profit, less CO₂. Front 1 players are not beaten
-        on both counts by anyone.
+        {goodDirection(xMetric, yMetric)} is the good direction: {yMetric.better},{" "}
+        {xMetric.better}. Front 1 players are not beaten on both counts by anyone.
       </p>
     </section>
   );

@@ -10,14 +10,18 @@ function formatCo2(value) {
   return `${Math.round(value)} kg`;
 }
 
-// Ranked by Pareto front first (front 1 = undominated on profit + CO2),
-// then by profit within a front.
-function Leaderboard({ rows, title }) {
+// Ranked by Pareto front first (front 1 = undominated on the chosen pair of
+// KPIs, CO2 vs profit by default), then by the Y-axis KPI within a front.
+// `caption` names the pair the fronts were computed on.
+function Leaderboard({ rows, title, caption }) {
   const hasFronts = rows.some((row) => row.front !== undefined);
 
   return (
     <section className="card">
       <h3>{title}</h3>
+      {caption && hasFronts && rows.length > 0 ? (
+        <p className="muted-text leaderboard-caption">{caption}</p>
+      ) : null}
       {rows.length === 0 ? (
         <p className="muted">No leaderboard data yet.</p>
       ) : (

@@ -86,6 +86,13 @@ export function announce({ gameId, adminToken, message }) {
   });
 }
 
+export function addStock({ gameId, adminToken, qty }) {
+  return request("/add-stock", {
+    method: "POST",
+    body: JSON.stringify({ gameId, adminToken, qty })
+  });
+}
+
 export function oneMoreHand({ gameId, adminToken }) {
   return request("/one-more-hand", {
     method: "POST",

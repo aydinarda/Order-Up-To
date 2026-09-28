@@ -14,6 +14,42 @@ test("initial state is an empty warehouse with a pipeline of length L+1 (reserve
   assert.deepEqual(state.pipeline, [0, 0, 0]);
 });
 
+test("admin-added stock lands this round for free and is not counted as a shipment", () => {
+  const state = createInitialState(config);
+  const { nextState, result } = advancePeriod(state, config, 100, 0, {
+    leadTime: 1,
+    priming: true,
+    addedQty: 100
+  });
+  assert.equal(result.addedQty, 100);
+  assert.equal(result.arrival, 0);
+  assert.equal(result.purchaseCost, 0);
+  assert.equal(result.transportCost, 0);
+  assert.equal(result.vehicles, 0);
+  // Held through the priming round like any other stock.
+  assert.equal(result.holdingCost, 100 * config.holdingCost);
+  assert.equal(nextState.onHand, 100);
+});
+
+test("admin-added stock clears open backorders first and books their revenue", () => {
+  const state = { onHand: -30, pipeline: [0, 0, 0] };
+  const { nextState, result } = advancePeriod(state, config, 50, 0, { addedQty: 100 });
+  assert.equal(result.backlogFilled, 30);
+  assert.equal(result.servedOnTime, 50);
+  assert.equal(result.sold, 80);
+  assert.equal(result.revenue, 80 * config.price);
+  assert.equal(nextState.onHand, 20);
+});
+
+test("admin-added stock still lands on a delayed round", () => {
+  const state = { onHand: 0, pipeline: [40, 0, 0] };
+  const { nextState, result } = advancePeriod(state, config, 30, 0, { addedQty: 50, delayed: true });
+  assert.equal(result.arrival, 0); // the ship is held up...
+  assert.equal(result.servedOnTime, 30); // ...but the added units serve demand
+  assert.equal(nextState.onHand, 20);
+  assert.equal(nextState.pipeline[0], 40);
+});
+
 test("priming round: no sales, opening order arrives with lead time 1", () => {
   const state = createInitialState(config);
   const { nextState, result } = advancePeriod(state, config, 100, 150, {

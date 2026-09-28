@@ -37,6 +37,13 @@ function RoundResult({ result, expressEnabled = false }) {
         <p>Shipment arrived</p>
         <strong>{result.arrival}</strong>
 
+        {result.addedQty > 0 && (
+          <>
+            <p>Added by admin</p>
+            <strong>+{result.addedQty}</strong>
+          </>
+        )}
+
         <p>Realized demand</p>
         <strong>{result.priming || demandValue == null ? "—" : demandValue}</strong>
 

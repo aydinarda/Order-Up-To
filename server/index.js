@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { sampleDemand } from "./utils/demand.js";
 import { advancePeriod, createInitialState, DEFAULT_CONFIG } from "./utils/inventory.js";
-import { computeParetoFronts } from "./utils/pareto.js";
+import {
+  computeParetoFronts,
+  DEFAULT_PARETO_AXES,
+  PARETO_METRICS,
+  paretoAxesFromConfig
+} from "./utils/pareto.js";
 import { createRng, deriveSeed } from "./utils/rng.js";
 import {
   isDbEnabled,
@@ -23,10 +28,19 @@ const DEFAULT_ADMIN_KEY = process.env.ADMIN_KEY || "admin123";
 // quantity. If they have no previous round yet (first round / joined late), the
 // fallback is 0 ("order nothing this round").
 
-// Leaderboard = Pareto representation over (cumulative profit, cumulative CO2):
-// rows are annotated with a non-dominated front number and sorted (front asc,
-// profit desc). The same rows feed the client's profit-vs-CO2 scatter.
-function calculateLeaderboard(players) {
+// Leaderboard = Pareto representation over the two KPIs the admin picked
+// (config.paretoX / paretoY, default CO2 vs profit): rows are annotated with a
+// non-dominated front number for that pair only and sorted (front asc, then
+// best Y). Every row still carries all four KPIs, so the end-of-game report
+// can re-rank any other pair in the browser. The same rows feed the scatter.
+function rankLeaderboard(rows, config) {
+  return computeParetoFronts(rows, paretoAxesFromConfig(config)).map((row, index) => ({
+    ...row,
+    rank: index + 1
+  }));
+}
+
+function calculateLeaderboard(players, config) {
   const rows = Array.from(players.values()).map((player) => {
     const totals = player.history.reduce(
       (acc, entry) => ({
@@ -62,7 +76,7 @@ function calculateLeaderboard(players) {
     };
   });
 
-  return computeParetoFronts(rows).map((row, index) => ({ rank: index + 1, ...row }));
+  return rankLeaderboard(rows, config);
 }
 
 // Admin-tunable economy. Only seed is frozen once the first round has started
@@ -95,7 +109,18 @@ const CONFIG_FIELDS = {
   // Not structural — pipeline is already sized for it — so it's adjustable
   // any time, including as a mid-game "surprise" lever.
   delayProbability: { integer: false, min: 0, max: 1 },
-  seed: { integer: true, min: 0, max: 0xffffffff, preGameOnly: true }
+  seed: { integer: true, min: 0, max: 0xffffffff, preGameOnly: true },
+  // The two KPIs the leaderboard's Pareto fronts are ranked on (must differ).
+  // Presentation only — changing them re-ranks the leaderboard, nothing else —
+  // so unlike the economy they may change during an active round too.
+  paretoX: { oneOf: Object.keys(PARETO_METRICS), anyPhase: true },
+  paretoY: { oneOf: Object.keys(PARETO_METRICS), anyPhase: true }
+};
+
+const DEFAULT_GAME_CONFIG = {
+  ...DEFAULT_CONFIG,
+  paretoX: DEFAULT_PARETO_AXES.x,
+  paretoY: DEFAULT_PARETO_AXES.y
 };
 
 function parseConfigUpdates(body, gameStarted) {
@@ -113,6 +138,14 @@ function parseConfigUpdates(body, gameStarted) {
     if (rules.boolean) {
       if (typeof body[field] !== "boolean") {
         return { error: `${field} must be true or false` };
+      }
+      updates[field] = body[field];
+      continue;
+    }
+
+    if (rules.oneOf) {
+      if (!rules.oneOf.includes(body[field])) {
+        return { error: `${field} must be one of: ${rules.oneOf.join(", ")}` };
       }
       updates[field] = body[field];
       continue;
@@ -211,7 +244,10 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       if (error) {
         return res.status(400).json({ error });
       }
-      const config = { ...DEFAULT_CONFIG, ...updates };
+      const config = { ...DEFAULT_GAME_CONFIG, ...updates };
+      if (config.paretoX === config.paretoY) {
+        return res.status(400).json({ error: "paretoX and paretoY must be different" });
+      }
       if (config.seed === undefined) {
         config.seed = deriveSeed();
       }
@@ -237,6 +273,9 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         activeRoundDemand: null,
         activeRoundDelayed: false,
         activeRoundOrders: new Map(),
+        // Units the admin added to every player's stock since the last round
+        // ended; they land at the start of the next round (see /add-stock).
+        pendingStockAdded: 0,
         // Free-text note the admin broadcasts to the class (e.g. "bakeries are
         // ramping up for the holidays — expect higher demand"). null = none.
         announcement: null
@@ -302,7 +341,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     });
 
     if (activeGame.roundPhase === "pending") {
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
     }
 
     emitGameEvent(activeGame, "player_joined", {
@@ -325,6 +364,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       currentTurIndex: activeGame.currentTurIndex,
       roundsPlayed: player.history.length,
       cumulativeProfit: player.cumulativeProfit,
+      pendingStockAdded: activeGame.pendingStockAdded,
       inventory: {
         onHand: player.inventory.onHand,
         inTransit: player.inventory.pipeline.reduce((s, q) => s + q, 0),
@@ -430,7 +470,14 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       return res.status(403).json({ error: "admin authorization required" });
     }
 
-    if (activeGame.roundPhase === "active") {
+    // During an active round only presentation fields (the Pareto pair) may change.
+    const requestedFields = Object.keys(CONFIG_FIELDS).filter(
+      (field) => req.body?.[field] !== undefined
+    );
+    if (
+      activeGame.roundPhase === "active" &&
+      requestedFields.some((field) => !CONFIG_FIELDS[field].anyPhase)
+    ) {
       return res.status(400).json({ error: "cannot change config during active round" });
     }
 
@@ -445,7 +492,20 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       return res.status(400).json({ error: "no config fields to update" });
     }
 
-    activeGame.config = { ...activeGame.config, ...updates };
+    const nextConfig = { ...activeGame.config, ...updates };
+    if (nextConfig.paretoX === nextConfig.paretoY) {
+      return res.status(400).json({ error: "paretoX and paretoY must be different" });
+    }
+
+    activeGame.config = nextConfig;
+
+    if (updates.paretoX !== undefined || updates.paretoY !== undefined) {
+      // Re-rank the current standings on the new pair. The snapshot already
+      // holds every KPI, and re-ranking it (rather than rebuilding from player
+      // histories) also works after the game has finished and histories were
+      // archived.
+      activeGame.leaderboard = rankLeaderboard(activeGame.leaderboard, activeGame.config);
+    }
 
     if (updates.leadTime !== undefined || updates.seed !== undefined) {
       if (!gameStarted) {
@@ -498,6 +558,50 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     emitGameEvent(activeGame, "announcement", { announcement: activeGame.announcement });
 
     return res.json({ gameId: activeGame.id, announcement: activeGame.announcement });
+  });
+
+  // Admin adds units to EVERY player's stock (on top of what each one holds —
+  // it never levels stocks). Mainly for opening stock before round 1. The units
+  // are free and land at the start of the next round, where they clear any
+  // open backorders first like a normal delivery. Repeated adds accumulate.
+  app.post("/add-stock", (req, res) => {
+    const { gameId, adminToken, qty } = req.body || {};
+
+    if (!activeGame || gameId !== activeGame.id) {
+      return res.status(400).json({ error: "invalid or inactive game id" });
+    }
+
+    if (!adminToken || adminToken !== activeGame.adminToken) {
+      return res.status(403).json({ error: "admin authorization required" });
+    }
+
+    if (activeGame.roundPhase === "active") {
+      return res.status(400).json({ error: "cannot add stock during active round" });
+    }
+
+    const nextRound = getRoundForGame(activeGame);
+    if (!nextRound) {
+      return res.status(400).json({ error: "game already completed" });
+    }
+
+    const parsedQty = Number(qty);
+    if (!Number.isInteger(parsedQty) || parsedQty < 1) {
+      return res.status(400).json({ error: "qty must be a positive integer" });
+    }
+
+    activeGame.pendingStockAdded += parsedQty;
+
+    emitGameEvent(activeGame, "stock_added", {
+      addedQty: parsedQty,
+      pendingStockAdded: activeGame.pendingStockAdded
+    });
+
+    return res.json({
+      gameId: activeGame.id,
+      addedQty: parsedQty,
+      pendingStockAdded: activeGame.pendingStockAdded,
+      roundId: nextRound.id
+    });
   });
 
   app.post("/start-round", (req, res) => {
@@ -701,6 +805,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         {
           leadTime: orderLeadTime,
           expressQty,
+          addedQty: activeGame.pendingStockAdded,
           priming: isPriming,
           delayed: wasDelayed
         }
@@ -763,6 +868,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundDemand = null;
     activeGame.activeRoundDelayed = false;
     activeGame.activeRoundOrders = new Map();
+    activeGame.pendingStockAdded = 0;
 
     let isTurComplete = false;
     let isGameOver = false;
@@ -771,7 +877,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       isTurComplete = true;
 
       // Snapshot leaderboard before score reset
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
 
       const completedTurNumber = activeGame.currentTurIndex + 1;
 
@@ -793,7 +899,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         isGameOver = true;
       }
     } else {
-      activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+      activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
     }
 
     const nextRound = getRoundForGame(activeGame);
@@ -855,7 +961,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundDemand = null;
     activeGame.activeRoundDelayed = false;
     activeGame.activeRoundOrders = new Map();
-    activeGame.leaderboard = calculateLeaderboard(activeGame.players);
+    activeGame.leaderboard = calculateLeaderboard(activeGame.players, activeGame.config);
 
     emitGameEvent(activeGame, "game_extended");
 
@@ -956,6 +1062,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       activeRoundDemand: null,
       activeRoundDelayed: false,
       activeRoundOrders: new Map(),
+      pendingStockAdded: 0,
       announcement: null
     };
 
@@ -964,7 +1071,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       distribution: { ...restarted.distribution },
       updatedAt: createdAt
     });
-    restarted.leaderboard = calculateLeaderboard(restarted.players);
+    restarted.leaderboard = calculateLeaderboard(restarted.players, restarted.config);
 
     activeGame = restarted;
 
@@ -1042,6 +1149,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       config: activeGame.config,
       announcement: activeGame.announcement,
       finished: currentRound === null,
+      pendingStockAdded: activeGame.pendingStockAdded,
       roundHistory: isValidAdmin ? activeGame.roundHistory : undefined,
       player: player
         ? {

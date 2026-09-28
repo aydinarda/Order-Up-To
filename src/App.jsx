@@ -4,10 +4,13 @@ import OrderForm from "./components/OrderForm";
 import RoundResult from "./components/RoundResult";
 import Leaderboard from "./components/Leaderboard";
 import ParetoScatter from "./components/ParetoScatter";
+import ParetoExplorer, { paretoCaption } from "./components/ParetoExplorer";
+import ParetoAxesPicker from "./components/ParetoAxesPicker";
 import PipelineViz from "./components/PipelineViz";
 import ProgressBar from "./components/ProgressBar";
 import FleetSweep from "./components/FleetSweep";
 import {
+  addStock,
   endGame,
   endRound,
   fetchGameState,
@@ -29,12 +32,14 @@ import {
   updateUrlWithSession,
   getSessionFromUrl
 } from "./utils/sessionStorage";
+import { paretoAxesFromConfig } from "../server/utils/pareto.js";
 
 // Admin-tunable economy fields; the draft holds raw input strings (booleans for
 // toggles). All of them stay adjustable between rounds — a mid-game leadTime
 // change only affects new ships (in-flight ones keep their arrival time). Round
 // 1's opening order always arrives in 1 round regardless. Fields flagged
 // `express` belong to the fast truck and only show while it is available.
+// (The Pareto pair is also config, but the admin picks it on the chart itself.)
 const CONFIG_FIELD_DEFS = [
   { key: "leadTime", label: "Ship lead time (rounds)" },
   { key: "price", label: "Price ($/unit)" },
@@ -89,6 +94,10 @@ function App() {
   const [configDraft, setConfigDraft] = useState(draftFromConfig(null));
   const [hasUnsavedConfigChanges, setHasUnsavedConfigChanges] = useState(false);
   const [inventory, setInventory] = useState(null);
+  // Units the admin added to everyone's stock; they land at the start of the
+  // next round. The admin's input goes back to 0 after every add.
+  const [pendingStockAdded, setPendingStockAdded] = useState(0);
+  const [addStockInput, setAddStockInput] = useState("0");
   const [lastRoundResult, setLastRoundResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [leaderboardRows, setLeaderboardRows] = useState([]);
@@ -132,6 +141,9 @@ function App() {
       serviceLevelPct: demand > 0 ? (onTime / demand) * 100 : null
     };
   }, [history]);
+
+  // The pair of KPIs the admin set for the leaderboard's Pareto fronts.
+  const paretoAxes = useMemo(() => paretoAxesFromConfig(gameConfig), [gameConfig]);
 
   const applyServerConfig = useCallback((config) => {
     setGameConfig(config);
@@ -191,6 +203,7 @@ function App() {
             if (data.player?.inventory) {
               setInventory(data.player.inventory);
             }
+            setPendingStockAdded(data.pendingStockAdded ?? 0);
             setTotalRounds(data.totalRounds || 12);
             setAnnouncement(data.announcement ?? null);
             if (data.roundHistory) {
@@ -227,6 +240,7 @@ function App() {
     setRoundPhase(data.roundPhase || "pending");
     setTotalRounds(data.totalRounds || 12);
     setAnnouncement(data.announcement ?? null);
+    setPendingStockAdded(data.pendingStockAdded ?? 0);
 
     if (data.distribution) {
       const shouldPreserveAdminDraft =
@@ -330,6 +344,7 @@ function App() {
       if (data.inventory) {
         setInventory(data.inventory);
       }
+      setPendingStockAdded(data.pendingStockAdded ?? 0);
       setTotalRounds(data.totalRounds);
       setAnnouncement(data.announcement ?? null);
       setTurHistory([]);
@@ -448,6 +463,8 @@ function App() {
     setErrorMessage("");
     setAnnouncement(null);
     setAnnouncementDraft("");
+    setPendingStockAdded(0);
+    setAddStockInput("0");
   }, []);
 
   // "One more round?" — append a single extra round and resume the same game.
@@ -498,6 +515,7 @@ function App() {
       setLastRoundResult(null);
       setIsRoundSubmitted(false);
       setInventory(null);
+      setPendingStockAdded(0);
       setHasUnsavedDistributionChanges(false);
       setHasUnsavedConfigChanges(false);
       setShowRestartConfirm(false);
@@ -663,6 +681,40 @@ function App() {
       } else {
         setStatusMessage("Announcement sent to the class.");
       }
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  };
+
+  // Admin picks the Pareto pair on the chart itself. It is saved right away
+  // (no Set Parameters), works during a round too, and re-ranks everyone's
+  // leaderboard. Only gameConfig is updated so unsaved parameter edits survive.
+  const handleParetoAxesChange = async (axes) => {
+    try {
+      setErrorMessage("");
+      const data = await setConfig({ gameId, adminToken, paretoX: axes.x, paretoY: axes.y });
+      setGameConfig(data.config);
+      await refreshLeaderboard(gameId);
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  };
+
+  // Admin adds units on top of every player's current stock (never levels them).
+  // The input resets to 0 afterwards so an add is never repeated by accident.
+  const handleAddStock = async () => {
+    const qty = Number(addStockInput);
+    if (!Number.isInteger(qty) || qty < 1) {
+      setErrorMessage("Units to add must be a positive whole number.");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const data = await addStock({ gameId, adminToken, qty });
+      setPendingStockAdded(data.pendingStockAdded);
+      setAddStockInput("0");
+      setStatusMessage(`Added ${data.addedQty} units to every player's stock.`);
     } catch (error) {
       setErrorMessage(error.message);
     }
@@ -903,8 +955,15 @@ function App() {
           <p className="total-profit">Overall Profit: ${overallProfit.toLocaleString("en-US")}</p>
         </header>
 
-        <ParetoScatter rows={leaderboardRows} selfNickname={nickname} />
-        <Leaderboard rows={leaderboardRows} title="Final Leaderboard" />
+        {/* Everyone — admin included — can rank the final standings on any
+            pair of KPIs; it opens on the pair the admin set for the game. */}
+        <ParetoExplorer
+          key={`${paretoAxes.x}-${paretoAxes.y}`}
+          rows={leaderboardRows}
+          selfNickname={nickname}
+          defaultAxes={paretoAxes}
+          title="Final Leaderboard"
+        />
 
         <button type="button" className="back-to-game" onClick={() => setShowFinalLeaderboard(false)}>
           Back to game
@@ -1096,13 +1155,47 @@ function App() {
               )
             )}
           </div>
-          <button
-            type="button"
-            onClick={handleParametersSave}
-            disabled={roundPhase === "active"}
-          >
-            Set Parameters
-          </button>
+          <div className="set-params-row">
+            <button
+              type="button"
+              onClick={handleParametersSave}
+              disabled={roundPhase === "active"}
+            >
+              Set Parameters
+            </button>
+            <span
+              className={`set-params-hint ${
+                hasUnsavedConfigChanges || hasUnsavedDistributionChanges ? "is-dirty" : ""
+              }`}
+            >
+              (click after any update regarding the parameter set)
+            </span>
+          </div>
+
+          <div className="add-stock-control">
+            <label htmlFor="add-stock-input">Add units to every player's stock</label>
+            <div className="add-stock-row">
+              <input
+                id="add-stock-input"
+                type="number"
+                min="0"
+                step="1"
+                value={addStockInput}
+                onChange={(event) => setAddStockInput(event.target.value)}
+                disabled={roundPhase === "active" || !currentRound}
+              />
+              <button
+                type="button"
+                onClick={handleAddStock}
+                disabled={roundPhase === "active" || !currentRound || !(Number(addStockInput) > 0)}
+              >
+                + Add units to stock
+              </button>
+            </div>
+            {pendingStockAdded > 0 && currentRound ? (
+              <p className="muted add-stock-pending">+{pendingStockAdded} units added so far.</p>
+            ) : null}
+          </div>
 
           <div className="announce-control">
             <label htmlFor="announce-input">Announce to class</label>
@@ -1218,6 +1311,7 @@ function App() {
             onSubmit={handleOrderSubmit}
             disabled={isRoundSubmitted || roundPhase !== "active"}
             onHand={inventory?.onHand ?? 0}
+            addedStock={pendingStockAdded}
             inTransit={inventory?.inTransit ?? 0}
             config={gameConfig}
             priming={currentRound.id === 1}
@@ -1259,8 +1353,22 @@ function App() {
 
           {showLeaderboard ? (
             <>
-              <ParetoScatter rows={leaderboardRows} selfNickname={nickname} />
-              <Leaderboard rows={leaderboardRows} title="Leaderboard" />
+              <ParetoScatter
+                rows={leaderboardRows}
+                selfNickname={nickname}
+                axes={paretoAxes}
+                controls={
+                  isAdmin ? (
+                    <ParetoAxesPicker
+                      axes={paretoAxes}
+                      onChange={handleParetoAxesChange}
+                      idPrefix="pareto"
+                      note="Applies to every player's chart and leaderboard."
+                    />
+                  ) : null
+                }
+              />
+              <Leaderboard rows={leaderboardRows} title="Leaderboard" caption={paretoCaption(paretoAxes)} />
             </>
           ) : null}
         </aside>

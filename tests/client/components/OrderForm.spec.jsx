@@ -121,4 +121,14 @@ describe("OrderForm", () => {
     expect(screen.getByLabelText(/truck quantity/i)).toBeDisabled();
     expect(screen.getByRole("button", { name: /submit order/i })).toBeDisabled();
   });
+
+  it("counts stock the admin added as on hand and says so", () => {
+    render(
+      <OrderForm onSubmit={vi.fn()} disabled={false} onHand={-20} addedStock={100} inTransit={50} config={config} />
+    );
+
+    expect(screen.getByText("On hand").nextSibling).toHaveTextContent("80");
+    expect(screen.getByText("Inventory position").nextSibling).toHaveTextContent("130");
+    expect(screen.getByText(/the admin added 100 kg to your stock/i)).toBeInTheDocument();
+  });
 });

@@ -11,11 +11,24 @@ import { useState } from "react";
 // same round — it can still serve this round's demand — but smaller, pricier
 // and dirtier per kg) carries another. Either can be zero. The truck leg only
 // exists while the admin has it switched on (config.expressEnabled).
-function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, priming = false }) {
+//
+// `addedStock` = units the admin added to everyone's stock since the last
+// round. They land at the start of this round, so they already count as on
+// hand here (clearing any open backorders first).
+function OrderForm({
+  onSubmit,
+  disabled,
+  onHand: netOnHand = 0,
+  addedStock = 0,
+  inTransit = 0,
+  config,
+  priming = false
+}) {
   const [shipQty, setShipQty] = useState("");
   const [expressQty, setExpressQty] = useState("");
   const [error, setError] = useState("");
 
+  const onHand = netOnHand + addedStock;
   const inventoryPosition = onHand + inTransit;
 
   // Empty input means 0 for that leg; anything typed must be a non-negative int.
@@ -126,6 +139,10 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
         </div>
       </div>
 
+      {addedStock > 0 && (
+        <p className="order-preview">📦 The admin added {addedStock} kg to your stock (included in on hand).</p>
+      )}
+
       <form onSubmit={handleSubmit} className="order-form">
         {legs.length > 0 && (
           <div className="delivery-modes">
@@ -173,7 +190,9 @@ function OrderForm({ onSubmit, disabled, onHand = 0, inTransit = 0, config, prim
             {totalQty > 0
               ? `Total order: ${totalQty} kg`
               : priming
-                ? "No opening order — you'll start round 2 with an empty hub."
+                ? onHand > 0
+                  ? `No opening order — you'll start round 2 with only your ${onHand} kg on hand.`
+                  : "No opening order — you'll start round 2 with an empty hub."
                 : "No order this round — the hub runs down from stock on hand."}
           </p>
         )}
