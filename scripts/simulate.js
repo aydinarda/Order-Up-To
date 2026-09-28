@@ -19,8 +19,7 @@ const reps = arg("reps", 500);
 const config = {
   ...DEFAULT_CONFIG,
   co2PerUnitHeld: arg("co2held", DEFAULT_CONFIG.co2PerUnitHeld),
-  shipCapacity: arg("capacity", DEFAULT_CONFIG.shipCapacity),
-  startingOnHand: arg("start", DEFAULT_CONFIG.startingOnHand)
+  shipCapacity: arg("capacity", DEFAULT_CONFIG.shipCapacity)
 };
 const distribution = { type: "normal", mean: 100, stdDev: 20 };
 
@@ -76,7 +75,7 @@ for (const R of [1, 2, 3]) {
 
 console.log(
   `config: L=${config.leadTime} capacity=${config.shipCapacity} shipCost=${config.shipCost} ` +
-    `co2/ship=${config.shipCo2} co2/unit=${config.co2PerUnitHeld} start=${config.startingOnHand} ` +
+    `co2/ship=${config.shipCo2} co2/unit=${config.co2PerUnitHeld} ` +
     `rounds=${rounds} reps=${reps} demand=N(100,20)`
 );
 console.table(rows);

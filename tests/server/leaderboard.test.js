@@ -103,7 +103,7 @@ test("identical strategies share front 1 in stable (join) order with sequential 
 test("a player who never submits is scored with the zero fallback and runs up backorders", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, alice } = await setupDeterministicGame(app);
-  const idle = await join(app, gameId, "Idle");
+  await join(app, gameId, "Idle");
 
   // Alice plays q1=100 then 0; Idle never submits (fallback 0 every round).
   await playRound(app, gameId, adminToken, { [alice]: 100 });

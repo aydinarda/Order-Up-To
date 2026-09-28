@@ -1117,7 +1117,7 @@ function App() {
           <div className="config-form">
             {CONFIG_FIELD_DEFS.filter(
               ({ express }) => !express || configDraft.expressEnabled
-            ).map(({ key, label, type, preGameOnly, max, step }) =>
+            ).map(({ key, label, type, max, step }) =>
               type === "toggle" ? (
                 <label key={key} htmlFor={`config-${key}`} className="checkbox-line config-toggle">
                   <input
@@ -1135,7 +1135,6 @@ function App() {
               ) : (
                 <label key={key} htmlFor={`config-${key}`}>
                   {label}
-                  {preGameOnly && adminRoundHistory.length > 0 ? " (locked)" : ""}
                   <input
                     id={`config-${key}`}
                     type="number"
@@ -1147,9 +1146,7 @@ function App() {
                       setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }));
                       setHasUnsavedConfigChanges(true);
                     }}
-                    disabled={
-                      roundPhase === "active" || (preGameOnly && adminRoundHistory.length > 0)
-                    }
+                    disabled={roundPhase === "active"}
                   />
                 </label>
               )

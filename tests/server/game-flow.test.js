@@ -143,7 +143,6 @@ test("admin can update uniform distribution and it is stored", async () => {
   assert.equal(updateDistribution.body.distribution.type, "uniform");
   assert.equal(updateDistribution.body.distribution.min, 90);
   assert.equal(updateDistribution.body.distribution.max, 140);
-  assert.ok(updateDistribution.body.distributionHistory.length >= 2);
 
   const startRoundResponse = await request(app).post("/start-round").send({
     gameId: createRoom.body.gameId,

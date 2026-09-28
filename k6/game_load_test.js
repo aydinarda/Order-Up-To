@@ -223,7 +223,7 @@ export function concurrentSubmit(data) {
 
   const d  = j(r);
   // 400 "already submitted" is expected — only 5xx is a real failure.
-  const ok = check(r, {
+  check(r, {
     'submit: no 5xx':        () => r.status < 500,
     'submit: accepted true': () => r.status !== 200 || d.accepted === true,
   });
@@ -239,7 +239,7 @@ export function adminOps(data) {
 }
 
 // ── Scenario 3: health_storm ──────────────────────────────────────────────────
-export function healthStorm(_data) {
+export function healthStorm() {
   const r  = http.get(`${BASE}/health`, HDR);
   const d  = j(r);
   const ok = check(r, {

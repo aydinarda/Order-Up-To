@@ -89,12 +89,10 @@ const baseGameState = {
     nickname: "Alice",
     roundsPlayed: 0,
     cumulativeProfit: 0,
-    overallProfit: 0,
     history: [],
     turHistory: [],
     lastRoundResult: null,
     inventory,
-    lastQ: null,
     submittedThisRound: false
   }
 };
@@ -171,7 +169,6 @@ describe("App", () => {
       currentTurIndex: 1,
       player: {
         ...baseGameState.player,
-        overallProfit: 6420,
         turHistory: [{ turNumber: 1, cumulativeProfit: 6420, rounds: [] }]
       }
     });

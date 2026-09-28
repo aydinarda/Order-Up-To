@@ -285,7 +285,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         distribution: { type: "normal", mean: 100, stdDev: 20, min: 40, max: 160 },
         config,
         rand: createRng(config.seed),
-        distributionHistory: [],
         roundHistory: [],
         leaderboard: [],
         activeRoundDemand: null,
@@ -298,12 +297,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         // ramping up for the holidays — expect higher demand"). null = none.
         announcement: null
       };
-
-      activeGame.distributionHistory.push({
-        roundIndex: activeGame.currentRoundIndex,
-        distribution: { ...activeGame.distribution },
-        updatedAt: new Date().toISOString()
-      });
     }
 
     if (!activeGame) {
@@ -327,9 +320,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     const player = {
       id: randomUUID(),
       nickname,
-      currentRoundIndex: 0,
       cumulativeProfit: 0,
-      overallProfit: 0,
       history: [],
       turHistory: [],
       // Late joiners start with a fresh warehouse mid-game — acceptable for a classroom.
@@ -469,18 +460,11 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
     activeGame.distribution = newDistribution;
 
-    activeGame.distributionHistory.push({
-      roundIndex: activeGame.currentRoundIndex,
-      distribution: { ...activeGame.distribution },
-      updatedAt: new Date().toISOString()
-    });
-
     emitGameEvent(activeGame, "distribution_updated");
 
     return res.json({
       gameId: activeGame.id,
-      distribution: activeGame.distribution,
-      distributionHistory: activeGame.distributionHistory
+      distribution: activeGame.distribution
     });
   });
 
@@ -689,7 +673,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
   });
 
   app.post("/submit-order", (req, res) => {
-    const { gameId, playerId, orderQty, expressQty, mode: rawMode } = req.body || {};
+    const { gameId, playerId, orderQty, expressQty } = req.body || {};
 
     if (!activeGame || gameId !== activeGame.id) {
       return res.status(400).json({ error: "invalid or inactive game id" });
@@ -728,15 +712,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       return res.status(400).json({ error: "expressQty must be a non-negative integer" });
     }
 
-    // Back-compat: an old client sends a single quantity plus mode. Route
-    // mode:"express" onto the express truck; reject anything unrecognised.
-    if (rawMode !== undefined && rawMode !== "consolidated" && rawMode !== "express") {
-      return res.status(400).json({ error: "mode must be 'consolidated' or 'express'" });
-    }
-    const consolidatedQty = rawMode === "express" ? 0 : parsedQty;
-    const finalExpressQty = rawMode === "express" ? parsedQty + parsedExpressQty : parsedExpressQty;
-
-    if (finalExpressQty > 0 && !activeGame.config.expressEnabled) {
+    if (parsedExpressQty > 0 && !activeGame.config.expressEnabled) {
       return res.status(400).json({ error: "the express truck is not available" });
     }
 
@@ -754,8 +730,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     activeGame.activeRoundOrders.set(player.id, {
       playerId: player.id,
       nickname: player.nickname,
-      orderQty: consolidatedQty,
-      expressQty: finalExpressQty,
+      orderQty: parsedQty,
+      expressQty: parsedExpressQty,
       submittedAt: new Date().toISOString()
     });
 
@@ -768,8 +744,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     return res.json({
       accepted: true,
       roundId: round.id,
-      orderQty: consolidatedQty,
-      expressQty: finalExpressQty,
+      orderQty: parsedQty,
+      expressQty: parsedExpressQty,
       cumulativeProfit: player.cumulativeProfit,
       roundsPlayed: player.history.length,
       totalRounds: activeGame.handsPerTur,
@@ -912,7 +888,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
           cumulativeProfit: p.cumulativeProfit,
           rounds: [...p.history]
         });
-        p.overallProfit += p.cumulativeProfit;
         p.cumulativeProfit = 0;
         p.history = [];
       }
@@ -973,7 +948,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       }
       player.history = lastTur.rounds;
       player.cumulativeProfit = lastTur.cumulativeProfit;
-      player.overallProfit -= lastTur.cumulativeProfit;
     }
     activeGame.currentTurIndex = Math.max(0, activeGame.currentTurIndex - 1);
 
@@ -1050,9 +1024,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       players.set(member.id, {
         id: member.id,
         nickname: member.nickname,
-        currentRoundIndex: 0,
         cumulativeProfit: 0,
-        overallProfit: 0,
         history: [],
         turHistory: [],
         inventory: createInitialState(activeGame.config),
@@ -1081,7 +1053,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       distribution: { ...activeGame.distribution },
       config: { ...activeGame.config },
       rand: createRng(activeGame.config.seed),
-      distributionHistory: [],
       roundHistory: [],
       leaderboard: [],
       activeRoundDemand: null,
@@ -1091,11 +1062,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       announcement: null
     };
 
-    restarted.distributionHistory.push({
-      roundIndex: 0,
-      distribution: { ...restarted.distribution },
-      updatedAt: createdAt
-    });
     restarted.leaderboard = calculateLeaderboard(restarted.players, restarted.config);
 
     activeGame = restarted;
@@ -1182,7 +1148,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
             nickname: player.nickname,
             roundsPlayed: player.history.length,
             cumulativeProfit: player.cumulativeProfit,
-            overallProfit: player.overallProfit,
             history: player.history,
             turHistory: player.turHistory,
             lastRoundResult: player.history[player.history.length - 1] || null,
@@ -1191,7 +1156,6 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
               inTransit: player.inventory.pipeline.reduce((s, q) => s + q, 0),
               pipeline: player.inventory.pipeline
             },
-            lastQ: player.lastQ,
             submittedThisRound:
               activeGame.roundPhase === "active" && activeGame.activeRoundOrders.has(player.id)
           }

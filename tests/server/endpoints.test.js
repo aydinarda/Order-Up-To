@@ -319,20 +319,6 @@ test("set-config accepts per-unit shipping costs for both legs and rejects negat
   assert.equal(negative.status, 400);
 });
 
-test("submit-order rejects an unknown delivery mode", async () => {
-  const app = createApp({ adminKey: ADMIN_KEY });
-  const { gameId, adminToken, playerId } = await createGame(app);
-  await request(app).post("/start-round").send({ gameId, adminToken });
-
-  const res = await request(app)
-    .post("/submit-order")
-    .send({ gameId, playerId, orderQty: 100, mode: "teleport" });
-
-  assert.equal(res.status, 400);
-  assert.match(res.body.error, /mode/i);
-});
-
-// Back-compat: an old client sends a single quantity plus mode:"express".
 test("an express order arrives within the round it is placed", async () => {
   const app = createApp({ adminKey: ADMIN_KEY });
   const { gameId, adminToken, playerId } = await createGame(app, {
@@ -348,7 +334,7 @@ test("an express order arrives within the round it is placed", async () => {
   // Round 2: express order of 40 (one truck). Despite leadTime 3, it lands in
   // round 2 itself and can serve round 2's demand.
   await request(app).post("/start-round").send({ gameId, adminToken });
-  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 40, mode: "express" });
+  await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 0, expressQty: 40 });
   await request(app).post("/end-round").send({ gameId, adminToken });
 
   const gs = await request(app).get("/game-state").query({ gameId, playerId });
@@ -426,12 +412,6 @@ test("the express truck is off by default: truck orders are rejected, ship order
     .send({ gameId, playerId, orderQty: 50, expressQty: 40 });
   assert.equal(truckOrder.status, 400);
   assert.match(truckOrder.body.error, /express truck is not available/i);
-
-  // The old single-quantity express path is closed too.
-  const legacyExpress = await request(app)
-    .post("/submit-order")
-    .send({ gameId, playerId, orderQty: 40, mode: "express" });
-  assert.equal(legacyExpress.status, 400);
 
   const shipOrder = await request(app).post("/submit-order").send({ gameId, playerId, orderQty: 50 });
   assert.equal(shipOrder.status, 200);
