@@ -33,6 +33,7 @@ import {
   getSessionFromUrl
 } from "./utils/sessionStorage";
 import { paretoAxesFromConfig } from "../server/utils/pareto.js";
+import { zeroDemandShare } from "./utils/demand";
 
 // Admin-tunable economy fields; the draft holds raw input strings (booleans for
 // toggles). All of them stay adjustable between rounds — a mid-game leadTime
@@ -223,6 +224,15 @@ function App() {
       }
     }, []);
   const isGameFinished = Boolean(nickname) && currentRound === null;
+
+  // Normal demand with σ above a third of the mean: warn the admin how often a
+  // draw goes negative and is counted as zero demand.
+  const draftMean = Number(distributionMean);
+  const draftStdDev = Number(distributionStdDev);
+  const zeroShare =
+    distributionType === "normal" && draftMean > 0 && draftStdDev > draftMean / 3
+      ? zeroDemandShare(draftMean, draftStdDev)
+      : null;
 
   const refreshLeaderboard = async (nextGameId) => {
     const data = await fetchLeaderboard({ gameId: nextGameId || gameId });
@@ -570,9 +580,8 @@ function App() {
           return;
         }
 
-        // Mean is rounded to a whole number, so anything below 0.5 collapses to 0.
-        if (parsedMean < 0.5) {
-          setErrorMessage("Mean must be at least 0.5.");
+        if (parsedMean <= 0) {
+          setErrorMessage("Mean must be greater than 0.");
           return;
         }
 
@@ -1110,6 +1119,13 @@ function App() {
                   }}
                   disabled={roundPhase === "active"}
                 />
+                {zeroShare !== null ? (
+                  <p className="dist-warning" role="status">
+                    ⚠ σ is large relative to the mean: about{" "}
+                    {zeroShare < 0.001 ? "<0.1" : (zeroShare * 100).toFixed(1)}% of rounds will draw a
+                    negative number, which counts as zero demand.
+                  </p>
+                ) : null}
               </>
             )}
 

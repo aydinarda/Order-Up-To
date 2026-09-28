@@ -416,9 +416,9 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
         return res.status(400).json({ error: "mean and stdDev must be numbers" });
       }
 
-      // Mean is rounded to a whole number, so anything below 0.5 collapses to 0.
-      if (parsedMean < 0.5) {
-        return res.status(400).json({ error: "mean must be at least 0.5" });
+      // The mean is kept exactly as entered; each draw is rounded instead.
+      if (parsedMean <= 0) {
+        return res.status(400).json({ error: "mean must be greater than 0" });
       }
 
       if (parsedStdDev < 0) {
@@ -430,7 +430,7 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
 
       newDistribution = {
         type: "normal",
-        mean: Math.round(parsedMean),
+        mean: parsedMean,
         stdDev: parsedStdDev,
         min: parsedStdDev === 0 ? Math.round(parsedMean) : boundedMin,
         max: parsedStdDev === 0 ? Math.round(parsedMean) : boundedMax
@@ -1036,8 +1036,9 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
     // A brand-new game id means DB round writes start clean instead of colliding
     // with the previous run's (game_id, tur_no, round_id) rows. The adminToken is
     // reused so the admin keeps control without broadcasting a new secret.
-    // Re-seeding from the same config.seed replays the identical demand series —
-    // deliberate, so "run it again" debriefs compare strategies on equal terms.
+    // Every restart draws a fresh seed, so the new run faces a new demand series
+    // (config.seed records which one — it is logged with each round).
+    const config = { ...activeGame.config, seed: deriveSeed() };
     const restarted = {
       id: newGameId,
       adminToken: activeGame.adminToken,
@@ -1051,8 +1052,8 @@ export function createApp({ adminKey = DEFAULT_ADMIN_KEY, onGameEvent } = {}) {
       rounds: Array.from({ length: handsPerTur }, (_, i) => ({ id: i + 1, title: `Round ${i + 1}` })),
       roundPhase: "pending",
       distribution: { ...activeGame.distribution },
-      config: { ...activeGame.config },
-      rand: createRng(activeGame.config.seed),
+      config,
+      rand: createRng(config.seed),
       roundHistory: [],
       leaderboard: [],
       activeRoundDemand: null,

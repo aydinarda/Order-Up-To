@@ -624,3 +624,24 @@ test("restart drops stock that was added but has not landed yet", async () => {
   assert.equal(gs.body.pendingStockAdded, 0);
   assert.equal(gs.body.player.inventory.onHand, 0);
 });
+
+// ── Restart reseeds the demand stream ───────────────────────────────────────
+test("each restart draws a fresh seed and keeps the rest of the config", async () => {
+  const app = createApp({ adminKey: ADMIN_KEY });
+  const { gameId, adminToken, playerId } = await createGame(app, { config: { seed: 7, price: 55 } });
+
+  const first = await request(app).post("/restart-game").send({ gameId, adminToken, playerId });
+  assert.equal(first.status, 200);
+  assert.ok(Number.isInteger(first.body.config.seed));
+  assert.notEqual(first.body.config.seed, 7);
+  assert.equal(first.body.config.price, 55); // only the seed changes
+
+  const second = await request(app)
+    .post("/restart-game")
+    .send({ gameId: first.body.gameId, adminToken, playerId });
+  assert.notEqual(second.body.config.seed, first.body.config.seed);
+
+  // The new game really draws from the new seed.
+  const gs = await request(app).get("/game-state").query({ gameId: second.body.gameId });
+  assert.equal(gs.body.config.seed, second.body.config.seed);
+});

@@ -44,10 +44,10 @@ const normalCases = [
   { name: "valid boundary stdDev = 0 (deterministic)", body: { type: "normal", mean: 100, stdDev: 0 }, status: 200, expect: { mean: 100, min: 100, max: 100 } },
   { name: "valid clamp: min floored at 0", body: { type: "normal", mean: 5, stdDev: 10 }, status: 200, expect: { mean: 5, min: 0, max: 35 } },
   { name: "valid boundary mean = 1", body: { type: "normal", mean: 1, stdDev: 0 }, status: 200, expect: { mean: 1, min: 1, max: 1 } },
-  { name: "valid boundary mean = 0.5 (rounds up to 1)", body: { type: "normal", mean: 0.5, stdDev: 0 }, status: 200, expect: { mean: 1, min: 1, max: 1 } },
-  { name: "invalid boundary mean = 0", body: { type: "normal", mean: 0, stdDev: 5 }, status: 400, error: /at least 0.5/i },
-  { name: "invalid mean rounds down to 0 (0.3)", body: { type: "normal", mean: 0.3, stdDev: 5 }, status: 400, error: /at least 0.5/i },
-  { name: "invalid mean < 0", body: { type: "normal", mean: -5, stdDev: 5 }, status: 400, error: /at least 0.5/i },
+  { name: "valid fractional mean is kept as entered", body: { type: "normal", mean: 12.4, stdDev: 3 }, status: 200, expect: { mean: 12.4, min: 3, max: 21 } },
+  { name: "valid small mean (0.3) is not rounded away", body: { type: "normal", mean: 0.3, stdDev: 5 }, status: 200, expect: { mean: 0.3, min: 0 } },
+  { name: "invalid boundary mean = 0", body: { type: "normal", mean: 0, stdDev: 5 }, status: 400, error: /greater than 0/i },
+  { name: "invalid mean < 0", body: { type: "normal", mean: -5, stdDev: 5 }, status: 400, error: /greater than 0/i },
   { name: "invalid stdDev < 0", body: { type: "normal", mean: 100, stdDev: -1 }, status: 400, error: /cannot be negative/i },
   { name: "invalid non-numeric mean", body: { type: "normal", mean: "x", stdDev: 5 }, status: 400, error: /must be numbers/i }
 ];

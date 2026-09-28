@@ -1,5 +1,8 @@
+// Discrete uniform over the integers min..max, each with probability
+// 1/(max-min+1). (Rounding a continuous draw would give min and max only half
+// the chance of every value in between.)
 function randomUniform(min, max, rand) {
-  return Math.round(min + rand() * (max - min));
+  return min + Math.floor(rand() * (max - min + 1));
 }
 
 function randomNormal(mean, stdDev, rand) {

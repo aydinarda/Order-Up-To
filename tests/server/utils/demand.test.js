@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sampleDemand } from "../../../server/utils/demand.js";
+import { createRng } from "../../../server/utils/rng.js";
 
 test("uniform stays within [min, max]", () => {
   for (let i = 0; i < 1000; i++) {
@@ -20,6 +21,27 @@ test("uniform honors a stubbed Math.random (lower bound)", () => {
     assert.equal(sampleDemand({ type: "uniform", min: 80, max: 120 }), 80);
   } finally {
     Math.random = original;
+  }
+});
+
+test("uniform reaches its upper bound", () => {
+  const original = Math.random;
+  Math.random = () => 0.999999;
+  try {
+    assert.equal(sampleDemand({ type: "uniform", min: 80, max: 120 }), 120);
+  } finally {
+    Math.random = original;
+  }
+});
+
+test("uniform gives every integer, endpoints included, the same chance", () => {
+  const rand = createRng(7);
+  const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  const n = 40000;
+  for (let i = 0; i < n; i++) counts[sampleDemand({ type: "uniform", min: 1, max: 4 }, rand)] += 1;
+  for (const value of [1, 2, 3, 4]) {
+    const share = counts[value] / n;
+    assert.ok(Math.abs(share - 0.25) < 0.01, `P(${value}) = ${share}, expected 0.25`);
   }
 });
 
