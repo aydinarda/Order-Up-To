@@ -24,9 +24,9 @@ function ConfigDetail({ config }) {
       <ChipGroup
         title="Economics"
         chips={[
-          { label: "Price", value: `$${config.price}` },
+          { label: "Selling price", value: `$${config.price}` },
           { label: "Unit cost", value: `$${config.unitCost}` },
-          { label: "Holding", value: `$${config.holdingCost}/u` },
+          { label: "Holding cost", value: `$${config.holdingCost}/u` },
           { label: "Backorder", value: `$${config.backorderCost}/u` }
         ]}
       />

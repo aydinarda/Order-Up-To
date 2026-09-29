@@ -43,18 +43,18 @@ import { zeroDemandShare } from "./utils/demand";
 // (The Pareto pair is also config, but the admin picks it on the chart itself.)
 const CONFIG_FIELD_DEFS = [
   { key: "leadTime", label: "Ship lead time (rounds)" },
-  { key: "price", label: "Price ($/unit)" },
+  { key: "price", label: "Selling price ($/unit)" },
   { key: "unitCost", label: "Unit cost ($/unit)" },
-  { key: "holdingCost", label: "Holding ($/unit/round)" },
+  { key: "holdingCost", label: "Holding cost ($/unit/round)" },
   { key: "backorderCost", label: "Backorder penalty ($/unit/round)" },
   { key: "shipCapacity", label: "Ship capacity (units)" },
   { key: "shipCost", label: "Ship fixed cost ($/ship)" },
-  { key: "shipCostPerUnit", label: "Ship cost ($/unit shipped)" },
+  { key: "shipCostPerUnit", label: "Ship unit cost ($/unit shipped)" },
   { key: "shipCo2", label: "CO₂ per ship (kg)" },
   { key: "expressEnabled", label: "Fast truck available", type: "toggle" },
   { key: "expressCapacity", label: "Truck capacity (units)", express: true },
   { key: "expressFixedCost", label: "Truck fixed cost ($/truck)", express: true },
-  { key: "expressCostPerUnit", label: "Truck cost ($/unit shipped)", express: true },
+  { key: "expressCostPerUnit", label: "Truck unit cost ($/unit shipped)", express: true },
   { key: "expressCo2", label: "CO₂ per truck (kg)", express: true },
   { key: "co2PerUnitHeld", label: "CO₂ per unit held (kg)" },
   { key: "delayProbability", label: "Shipping delay chance (0–1)", max: 1, step: 0.05 }
